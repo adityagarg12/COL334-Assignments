@@ -101,15 +101,14 @@ vector<string> ParseResponse(const string& response) {
 }
 
 void DisplayWordFrequencies(const map<string, int>& wordFrequency) {
-    cout << "\n=== Current Word Frequencies ===" << endl;
+    cout << "\n=== Word Frequencies ===" << endl;
     if (wordFrequency.empty()) {
-        cout << "No words counted yet." << endl;
+        cout << "No words received." << endl;
     } else {
         for (const auto& pair : wordFrequency) {
             cout << pair.first << ", " << pair.second << endl;
         }
     }
-    cout << "=================================" << endl;
 }
 
 int main() {
@@ -119,8 +118,7 @@ int main() {
     cout << "Client Configuration:" << endl;
     cout << "Server IP: " << config.server_ip << endl;
     cout << "Server Port: " << config.server_port << endl;
-    cout << "Default k (words per request): " << config.k << endl;
-    cout << "Default p (starting offset): " << config.p << endl;
+    cout << "Request: p=" << config.p << ", k=" << config.k << endl;
     cout << "File: " << config.filename << endl << endl;
     
     // Create socket
@@ -129,6 +127,7 @@ int main() {
         cerr << "Socket creation failed" << endl;
         return 1;
     }
+    cout << "Socket created successfully" << endl;
     
     struct sockaddr_in srv;
     srv.sin_family = AF_INET;
@@ -145,110 +144,60 @@ int main() {
     }
     
     cout << "Connected to server successfully!" << endl;
-    cout << "===========================================" << endl;
     
-    map<string, int> wordFrequency;
-    string input;
+    // Send request in format "p,k\n"
+    string request = to_string(config.p) + "," + to_string(config.k) + "\n";
+    cout << "Sending request: " << request;
     
-    cout << "\nCommands:" << endl;
-    cout << "1. Enter 'p,k' to request k words starting from offset p" << endl;
-    cout << "2. Enter 'auto' to use config defaults and auto-increment offset" << endl;
-    cout << "3. Enter 'freq' to display current word frequencies" << endl;
-    cout << "4. Enter 'quit' to exit" << endl;
-    cout << "===========================================" << endl;
+    send(nClientSocket, request.c_str(), request.length(), 0);
     
-    int currentOffset = config.p;
+    // Receive response
+    char buffer[1024] = {0};
+    int bytesReceived = recv(nClientSocket, buffer, sizeof(buffer) - 1, 0);
     
-    while (true) {
-        cout << "\nEnter command: ";
-        getline(cin, input);
-        
-        if (input == "quit" || input == "exit") {
-            cout << "Closing connection..." << endl;
-            break;
-        }
-        
-        if (input == "freq") {
-            DisplayWordFrequencies(wordFrequency);
-            continue;
-        }
-        
-        string request;
-        if (input == "auto") {
-            request = to_string(currentOffset) + "," + to_string(config.k) + "\n";
-            cout << "Auto request: " << request;
-        } else {
-            // Validate input format
-            size_t commaPos = input.find(',');
-            if (commaPos == string::npos) {
-                cout << "Invalid format. Use 'p,k' where p=offset, k=count" << endl;
-                continue;
-            }
-            request = input + "\n";
-            cout << "Manual request: " << request;
-        }
-        
-        wordFrequency.clear();
-
-        // Send request to server
-        send(nClientSocket, request.c_str(), request.length(), 0);
-        
-        // Receive response
-        char buffer[1024] = {0};
-        int bytesReceived = recv(nClientSocket, buffer, sizeof(buffer) - 1, 0);
-        
-        if (bytesReceived <= 0) {
-            cout << "Server disconnected or error occurred." << endl;
-            break;
-        }
-        
+    if (bytesReceived > 0) {
         buffer[bytesReceived] = '\0';
         string response(buffer);
-        cout << "Server response: " << response;
+        cout << "Received response: " << response;
+        
+        // Parse and count word frequencies
+        map<string, int> wordFrequency;
         
         // Check for EOF
-        if (response == "EOF\n" || response.find("EOF") != string::npos) {
-            cout << "End of file reached." << endl;
+        if (response == "EOF\n") {
+            cout << "Request offset is beyond file size - no words received." << endl;
+        } else if (response.find("EOF") != string::npos) {
+            cout << "End of file reached in response." << endl;
             
-            // If there are words before EOF, process them
-            if (response != "EOF\n") {
-                vector<string> words = ParseResponse(response);
-                if (!words.empty()) {
-                    cout << "Received " << words.size() << " words: ";
-                    for (const string& word : words) {
-                        cout << word << " ";
-                        wordFrequency[word]++;
-                    }
-                    cout << endl;
-                }
-            }
-        } else {
-            // Parse and count words
+            // Process words before EOF
             vector<string> words = ParseResponse(response);
-            if (!words.empty()) {
-                cout << "Received " << words.size() << " words: ";
-                for (const string& word : words) {
-                    cout << word << " ";
-                    wordFrequency[word]++;
-                }
-                cout << endl;
-                
-                // Update offset for auto mode
-                if (input == "auto") {
-                    currentOffset += config.k;
-                }
+            cout << "Received " << words.size() << " words: ";
+            for (const string& word : words) {
+                cout << word << " ";
+                wordFrequency[word]++;
             }
+            cout << endl;
+        } else {
+            // Normal response - parse all words
+            vector<string> words = ParseResponse(response);
+            cout << "Received " << words.size() << " words: ";
+            for (const string& word : words) {
+                cout << word << " ";
+                wordFrequency[word]++;
+            }
+            cout << endl;
         }
+        
+        // Display word frequencies
+        DisplayWordFrequencies(wordFrequency);
+        
+    } else {
+        cout << "No data received or error occurred." << endl;
     }
     
-    // Display final word frequencies
-    cout << "\n=== Final Word Frequencies ===" << endl;
-    for (const auto& pair : wordFrequency) {
-        cout << pair.first << ", " << pair.second << endl;
-    }
-    
+    // Close connection
     close(nClientSocket);
-    cout << "\nConnection closed. Goodbye!" << endl;
+    cout << "\nConnection closed." << endl;
     
     return 0;
 }
