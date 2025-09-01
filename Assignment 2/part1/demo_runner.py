@@ -8,16 +8,18 @@ P = int(os.environ.get("P", "0"))
 # load base config and override p
 cfg = json.loads(pathlib.Path("config.json").read_text())
 cfg["p"] = P
-pathlib.Path("demo_config.json").write_text(json.dumps(cfg))
+cfg["k"] = K
+with open("demo_config.json", "w") as f:
+    json.dump(cfg, f, indent=2)
 
 net = make_net(); net.start()
 h1, h2 = net.get('h1'), net.get('h2')
 
 # start server with demo config
 srv = h2.popen("./server --config demo_config.json", shell=True)
-time.sleep(0.5)
+time.sleep(3)
 
 # run client once (no --quiet): prints word frequencies + ELAPSED_MS
-print(h1.cmd(f"./client --config demo_config.json --k {K}"))
+print(h1.cmd(f"./client --config demo_config.json"))
 
 srv.terminate(); time.sleep(0.2); net.stop()

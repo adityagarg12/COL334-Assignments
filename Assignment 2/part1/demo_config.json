@@ -1,1 +1,7 @@
-{"server_ip": "127.0.0.1", "server_port": 5000, "k": 5, "p": 0, "filename": "words.txt"}
+{
+  "server_ip": "10.0.0.2",
+  "server_port": 5000,
+  "k": 3,
+  "p": 1,
+  "filename": "words.txt"
+}

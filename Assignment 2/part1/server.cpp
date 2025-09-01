@@ -135,10 +135,16 @@ string ProcessRequest(const string& request) {
         return "Invalid request format\n";
     }
 }
-
-int main() {
-    // Load configuration
-    Config config = LoadConfig("config.json");
+int main(int argc, char* argv[]) {
+    // Determine config file name
+    string configFile = "config.json";
+    for (int i = 1; i < argc - 1; ++i) {
+        if (string(argv[i]) == "--config") {
+            configFile = argv[i + 1];
+            break;
+        }
+    }
+    Config config = LoadConfig(configFile);
     
     cout << "Server Configuration:" << endl;
     cout << "IP: " << config.server_ip << endl;

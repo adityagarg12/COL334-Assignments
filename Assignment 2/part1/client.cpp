@@ -111,9 +111,16 @@ void DisplayWordFrequencies(const map<string, int>& wordFrequency) {
     }
 }
 
-int main() {
+int main(int argc, char* argv[]) {
     // Load configuration
-    Config config = LoadConfig("config.json");
+    string configFile = "config.json";
+    for (int i = 1; i < argc - 1; ++i) {
+        if (string(argv[i]) == "--config") {
+            configFile = argv[i + 1];
+            break;
+        }
+    }
+    Config config = LoadConfig(configFile);
     
     cout << "Client Configuration:" << endl;
     cout << "Server IP: " << config.server_ip << endl;
@@ -137,6 +144,9 @@ int main() {
     
     // Connect to server
     int nRet = connect(nClientSocket, (struct sockaddr*)&srv, sizeof(srv));
+
+    cout << nRet << endl;
+
     if (nRet < 0) {
         cerr << "Connection to server failed" << endl;
         close(nClientSocket);

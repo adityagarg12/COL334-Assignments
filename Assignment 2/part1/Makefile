@@ -21,11 +21,7 @@ clean:
 	rm -f $(TARGET_SERVER) $(TARGET_CLIENT)
 
 run:
-	./server & \
-	SERVER_PID=$$!; \
-	sleep 1; \
-	./client; \
-	kill $$SERVER_PID
+	K=$(K) P=$(P) python3 demo_runner.py
 
 
 
