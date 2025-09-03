@@ -9,6 +9,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <cstring>
+#include <chrono>
 
 using namespace std;
 
@@ -155,10 +156,13 @@ int main(int argc, char* argv[]) {
     
     cout << "Connected to server successfully!" << endl;
     
+    //start time
+    auto start_time = std::chrono::high_resolution_clock::now();
+
     // Send request in format "p,k\n"
     string request = to_string(config.p) + "," + to_string(config.k) + "\n";
+
     cout << "Sending request: " << request;
-    
     send(nClientSocket, request.c_str(), request.length(), 0);
     
     // Receive response
@@ -200,7 +204,12 @@ int main(int argc, char* argv[]) {
         
         // Display word frequencies
         DisplayWordFrequencies(wordFrequency);
-        
+
+        //end time 
+        auto end_time = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::milli> elapsed = end_time - start_time;
+        cout << "ELAPSED_MS:" << elapsed.count() << endl;
+
     } else {
         cout << "No data received or error occurred." << endl;
     }
