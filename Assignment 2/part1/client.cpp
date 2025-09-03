@@ -87,11 +87,12 @@ vector<string> ParseResponse(const string& response) {
     stringstream ss(response);
     string word;
     while (getline(ss, word, ',')) {
-        if (!word.empty() && word != "EOF") {
+        if (!word.empty() && word != "EOF" && word != "EOF\n" && word != "EOF\r" && word != "\n" && word != "\r") {
             // Remove newline if present
-            if (word.back() == '\n') {
+            if (word.back() == '\n' || word.back() == '\r') {
                 word.pop_back();
             }
+
             words.push_back(word);
         }
     }
