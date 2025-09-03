@@ -16,7 +16,7 @@ net = make_net(); net.start()
 h1, h2 = net.get('h1'), net.get('h2')
 
 # start server with demo config
-srv = h2.popen("./server --config demo_config.json", shell=True)
+srv = h2.popen("./server --config config.json > server_output.txt 2>&1", shell=True)
 time.sleep(3)
 
 # run client once (no --quiet): prints word frequencies + ELAPSED_MS

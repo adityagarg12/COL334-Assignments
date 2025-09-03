@@ -1,14 +1,14 @@
 #include <iostream>
+#include <string>
 #include <fstream>
 #include <sstream>
-#include <string>
-#include <map>
 #include <vector>
+#include <map>
+#include <cstring>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <cstring>
 #include <chrono>
 
 using namespace std;
@@ -25,7 +25,6 @@ struct Config {
 Config LoadConfig(const string& configFile) {
     Config config;
     ifstream file(configFile);
-    
     if (!file.is_open()) {
         cerr << "Failed to open config file: " << configFile << endl;
         exit(1);
@@ -87,7 +86,6 @@ vector<string> ParseResponse(const string& response) {
     vector<string> words;
     stringstream ss(response);
     string word;
-    
     while (getline(ss, word, ',')) {
         if (!word.empty() && word != "EOF") {
             // Remove newline if present
@@ -97,12 +95,11 @@ vector<string> ParseResponse(const string& response) {
             words.push_back(word);
         }
     }
-    
     return words;
 }
 
 void DisplayWordFrequencies(const map<string, int>& wordFrequency) {
-    cout << "\n=== Word Frequencies ===" << endl;
+    cout << "\n=== Final Word Frequencies ===" << endl;
     if (wordFrequency.empty()) {
         cout << "No words received." << endl;
     } else {
@@ -121,12 +118,12 @@ int main(int argc, char* argv[]) {
             break;
         }
     }
-    Config config = LoadConfig(configFile);
     
+    Config config = LoadConfig(configFile);
     cout << "Client Configuration:" << endl;
     cout << "Server IP: " << config.server_ip << endl;
     cout << "Server Port: " << config.server_port << endl;
-    cout << "Request: p=" << config.p << ", k=" << config.k << endl;
+    cout << "Initial Request: p=" << config.p << ", k=" << config.k << endl;
     cout << "File: " << config.filename << endl << endl;
     
     // Create socket
@@ -135,6 +132,7 @@ int main(int argc, char* argv[]) {
         cerr << "Socket creation failed" << endl;
         return 1;
     }
+    
     cout << "Socket created successfully" << endl;
     
     struct sockaddr_in srv;
@@ -145,9 +143,7 @@ int main(int argc, char* argv[]) {
     
     // Connect to server
     int nRet = connect(nClientSocket, (struct sockaddr*)&srv, sizeof(srv));
-
     cout << nRet << endl;
-
     if (nRet < 0) {
         cerr << "Connection to server failed" << endl;
         close(nClientSocket);
@@ -156,39 +152,60 @@ int main(int argc, char* argv[]) {
     
     cout << "Connected to server successfully!" << endl;
     
-    //start time
+    // Start time
     auto start_time = std::chrono::high_resolution_clock::now();
-
-    // Send request in format "p,k\n"
-    string request = to_string(config.p) + "," + to_string(config.k) + "\n";
-
-    cout << "Sending request: " << request;
-    send(nClientSocket, request.c_str(), request.length(), 0);
     
-    // Receive response
-    char buffer[1024] = {0};
-    int bytesReceived = recv(nClientSocket, buffer, sizeof(buffer) - 1, 0);
+    // Initialize variables for multiple requests
+    int current_offset = config.p;
+    int request_count = 0;
+    bool eof_reached = false;
+    map<string, int> totalWordFrequency;
+    int total_words_received = 0;
     
-    if (bytesReceived > 0) {
+    cout << "\n=== Starting continuous requests until EOF ===" << endl;
+    
+    // Loop until EOF is reached
+    while (!eof_reached) {
+        request_count++;
+        
+        // Send request in format "p,k\n"
+        string request = to_string(current_offset) + "," + to_string(config.k) + "\n";
+        cout << "\n--- Request #" << request_count << " ---" << endl;
+        cout << "Sending request: offset=" << current_offset << ", count=" << config.k << endl;
+        
+        int bytes_sent = send(nClientSocket, request.c_str(), request.length(), 0);
+        if (bytes_sent < 0) {
+            cerr << "Failed to send request" << endl;
+            break;
+        }
+        
+        // Receive response
+        char buffer[1024] = {0};
+        int bytesReceived = recv(nClientSocket, buffer, sizeof(buffer) - 1, 0);
+        if (bytesReceived <= 0) {
+            cout << "No data received or connection closed." << endl;
+            break;
+        }
+        
         buffer[bytesReceived] = '\0';
         string response(buffer);
         cout << "Received response: " << response;
-        
-        // Parse and count word frequencies
-        map<string, int> wordFrequency;
-        
-        // Check for EOF
+
+        // Check for EOF cases
         if (response == "EOF\n") {
-            cout << "Request offset is beyond file size - no words received." << endl;
+            cout << "EOF reached - no more words available." << endl;
+            eof_reached = true;
         } else if (response.find("EOF") != string::npos) {
-            cout << "End of file reached in response." << endl;
+            cout << "EOF reached in response - processing final words." << endl;
+            eof_reached = true;
             
             // Process words before EOF
             vector<string> words = ParseResponse(response);
-            cout << "Received " << words.size() << " words: ";
+            cout << "Received " << words.size() << " words in final batch: ";
             for (const string& word : words) {
                 cout << word << " ";
-                wordFrequency[word]++;
+                totalWordFrequency[word]++;
+                total_words_received++;
             }
             cout << endl;
         } else {
@@ -196,23 +213,35 @@ int main(int argc, char* argv[]) {
             vector<string> words = ParseResponse(response);
             cout << "Received " << words.size() << " words: ";
             for (const string& word : words) {
-                cout << word << " ";
-                wordFrequency[word]++;
+                cout << "word="<< word ;
+                totalWordFrequency[word]++;
+                if (word == "cow") {
+                    cout << "frequency= " << totalWordFrequency[word] << " ";
+                }
+                total_words_received++;
             }
             cout << endl;
+            
+            // Update offset for next request
+            current_offset += words.size();
         }
         
-        // Display word frequencies
-        DisplayWordFrequencies(wordFrequency);
-
-        //end time 
-        auto end_time = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double, std::milli> elapsed = end_time - start_time;
-        cout << "ELAPSED_MS:" << elapsed.count() << endl;
-
-    } else {
-        cout << "No data received or error occurred." << endl;
+        cout << "Total words received so far: " << total_words_received << endl;
     }
+    
+    // End time
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::milli> elapsed = end_time - start_time;
+    
+    // Display final results
+    cout << "\n=== Summary ===" << endl;
+    cout << "Total requests sent: " << request_count << endl;
+    cout << "Total words received: " << total_words_received << endl;
+    
+    // Display word frequencies
+    DisplayWordFrequencies(totalWordFrequency);
+    
+    cout << "ELAPSED_MS:" << elapsed.count() << endl;
     
     // Close connection
     close(nClientSocket);

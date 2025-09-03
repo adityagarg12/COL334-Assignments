@@ -98,7 +98,7 @@ def main():
                 cmd = CLIENT_CMD_TMPL
                 out = h1.cmd(cmd)
                 print(out)
-                time.sleep(0.5) 
+                time.sleep(1) 
                 # parse ELAPSED_MS
                 # m = re.search(r"ELAPSED_MS:(\d+)", out)
                 m = re.search(r"ELAPSED_MS:(\d+(?:\.\d+)?)", out)

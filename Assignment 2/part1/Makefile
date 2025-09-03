@@ -23,6 +23,10 @@ clean:
 run:
 	K=$(K) P=$(P) python3 demo_runner.py
 
+run_experiments:
+	sudo python3 run_experiments.py
 
+plot:
+	python3 plot_results.py
 
 .PHONY: all clean run-server run-client
