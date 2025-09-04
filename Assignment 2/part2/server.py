@@ -108,7 +108,7 @@ class WordServer:
             else:
                 # Get k words starting from offset p
                 words_to_send = min(k, len(self.words) - p)
-                reached_eof = (p + k >= len(self.words))
+                reached_eof = (p + k > len(self.words))
                 
                 response_words = []
                 for i in range(words_to_send):

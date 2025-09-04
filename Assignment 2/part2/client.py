@@ -85,7 +85,7 @@ class WordClient:
             print("Client Configuration:")
             print(f"Server IP: {config.server_ip}")
             print(f"Server Port: {config.server_port}")
-            print(f"Request: p={config.p}, k={config.k}")
+            print(f"Initial Request: p={config.p}, k={config.k}")
             print(f"File: {config.filename}")
             print()
             return config
@@ -103,22 +103,26 @@ class WordClient:
         if response.strip():
             word_list = response.strip().split(',')
             for word in word_list:
-                if word and word != "EOF":
+                if word and word != "EOF" and word != "EOF\n" and word != "EOF\r":
+                    # Remove newline if present
+                    if word.endswith('\n') or word.endswith('\r'):
+                        word = word.rstrip('\n\r')
                     words.append(word)
         return words
     
     def display_word_frequencies(self, word_frequency: Dict[str, int]):
         """Display the word frequencies."""
-        print("\n=== Word Frequencies ===")
+        print("\n=== Final Word Frequencies ===")
         if not word_frequency:
             print("No words received.")
         else:
             for word, count in word_frequency.items():
                 print(f"{word}, {count}")
     
-    def connect_and_request(self) -> Dict[str, int]:
-        """Connect to server, send single request, get response, and disconnect."""
-        word_frequency = defaultdict(int)
+    def connect_and_request_continuously(self) -> Dict[str, int]:
+        """Connect to server, send multiple requests until EOF, and disconnect."""
+        total_word_frequency = defaultdict(int)
+        client_socket = None
         
         try:
             # Create socket
@@ -129,30 +133,58 @@ class WordClient:
             client_socket.connect((self.config.server_ip, self.config.server_port))
             print("Connected to server successfully!")
             
-            # Send request in format "p,k\n"
-            request = f"{self.config.p},{self.config.k}\n"
-            print(f"Sending request: {request.strip()}")
-            client_socket.send(request.encode('utf-8'))
+            # Initialize variables for multiple requests
+            current_offset = self.config.p
+            request_count = 0
+            eof_reached = False
+            total_words_received = 0
             
-            # Receive response
-            response = client_socket.recv(1024).decode('utf-8')
-            print(f"Received response: {response.strip()}")
+            print("\n=== Starting continuous requests until EOF ===")
             
-            # Parse and count word frequencies
-            if response.strip() == "EOF":
-                print("Request offset is beyond file size - no words received.")
-            elif "EOF" in response:
-                print("End of file reached in response.")
-                words = self.parse_response(response)
-                print(f"Received {len(words)} words: {' '.join(words[:10])}" + ("..." if len(words) > 10 else ""))
-                for word in words:
-                    word_frequency[word] += 1
-            else:
-                # Normal response - parse all words
-                words = self.parse_response(response)
-                print(f"Received {len(words)} words: {' '.join(words[:10])}" + ("..." if len(words) > 10 else ""))
-                for word in words:
-                    word_frequency[word] += 1
+            # Loop until EOF is reached
+            while not eof_reached:
+                request_count += 1
+                
+                # Send request in format "p,k\n"
+                request = f"{current_offset},{self.config.k}\n"
+                print(f"\n--- Request #{request_count} ---")
+                print(f"Sending request: offset={current_offset}, count={self.config.k}")
+                
+                client_socket.send(request.encode('utf-8'))
+                
+                # Receive response
+                response = client_socket.recv(1024).decode('utf-8')
+                print(f"Received response: {response.strip()}")
+                
+                # Check for EOF cases
+                if response.strip() == "EOF":
+                    print("EOF reached - no more words available.")
+                    eof_reached = True
+                elif "EOF" in response:
+                    print("EOF reached in response - processing final words.")
+                    eof_reached = True
+                    # Process words before EOF
+                    words = self.parse_response(response)
+                    print(f"Received {len(words)} words in final batch: {' '.join(words[:10])}" + ("..." if len(words) > 10 else ""))
+                    for word in words:
+                        total_word_frequency[word] += 1
+                        total_words_received += 1
+                else:
+                    # Normal response - parse all words
+                    words = self.parse_response(response)
+                    print(f"Received {len(words)} words: {' '.join(words[:10])}" + ("..." if len(words) > 10 else ""))
+                    for word in words:
+                        total_word_frequency[word] += 1
+                        total_words_received += 1
+                    
+                    # Update offset for next request
+                    current_offset += len(words)
+                
+                print(f"Total words received so far: {total_words_received}")
+            
+            print(f"\n=== Summary ===")
+            print(f"Total requests sent: {request_count}")
+            print(f"Total words received: {total_words_received}")
             
         except ConnectionRefusedError:
             print("Connection to server failed - server may not be running")
@@ -161,18 +193,19 @@ class WordClient:
             print(f"Client error: {e}")
             return {}
         finally:
-            try:
-                client_socket.close()
-                print("Connection closed.")
-            except:
-                pass
+            if client_socket:
+                try:
+                    client_socket.close()
+                    print("\nConnection closed.")
+                except:
+                    pass
         
-        return dict(word_frequency)
+        return dict(total_word_frequency)
     
     def run(self) -> tuple:
         """Run the client and return word frequencies and completion time."""
         start_time = time.time()
-        word_frequencies = self.connect_and_request()
+        word_frequencies = self.connect_and_request_continuously()
         end_time = time.time()
         
         # Display results
