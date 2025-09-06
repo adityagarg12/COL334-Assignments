@@ -1,4 +1,6 @@
-# Makefile for Part 3
+SHELL := /bin/bash
+VENV_DIR = venv
+PIP = $(VENV_DIR)/bin/pip
 
 # Runs one experiment with the FCFS server and parameters in config.json
 run-fcfs:

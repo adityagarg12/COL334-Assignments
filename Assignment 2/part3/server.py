@@ -1,278 +1,169 @@
 import socket
-import select
+import threading
+import json
+import time
+import os
 import sys
-from typing import List, Dict
 
-class Config:
-    def __init__(self):
-        self.server_ip = ""
-        self.server_port = 0
-        self.filename = ""
-
-class WordServer:
+class MultithreadedWordServer:
     def __init__(self, config_file: str = "config.json"):
-        """Initialize the server with configuration."""
         self.config = self.load_config(config_file)
         self.words = []
         self.load_words_from_file()
         self.server_socket = None
-        self.client_sockets = []  # List to track connected clients (max 32)
-        self.max_clients = 32
-        
-    def load_config(self, config_file: str) -> Config:
-        """Load configuration from JSON file using custom parser."""
-        config = Config()
-        
+        self.client_count = 0
+        self.client_lock = threading.Lock()  # For thread-safe client counting
+
+    def load_config(self, config_file: str) -> dict:
         try:
             with open(config_file, 'r') as f:
-                lines = f.readlines()
-            
-            for line in lines:
-                # Remove spaces and tabs
-                line = line.strip()
-                if not line:
-                    continue
-                
-                if '"server_ip"' in line:
-                    colon_pos = line.find(':')
-                    if colon_pos != -1:
-                        quote_start = line.find('"', colon_pos)
-                        if quote_start != -1:
-                            quote_end = line.find('"', quote_start + 1)
-                            if quote_end != -1:
-                                config.server_ip = line[quote_start + 1:quote_end]
-                
-                elif '"server_port"' in line:
-                    colon_pos = line.find(':')
-                    if colon_pos != -1:
-                        num_str = line[colon_pos + 1:]
-                        clean_num = ""
-                        for c in num_str:
-                            if c.isdigit():
-                                clean_num += c
-                        if clean_num:
-                            config.server_port = int(clean_num)
-                
-                elif '"filename"' in line:
-                    colon_pos = line.find(':')
-                    if colon_pos != -1:
-                        quote_start = line.find('"', colon_pos)
-                        if quote_start != -1:
-                            quote_end = line.find('"', quote_start + 1)
-                            if quote_end != -1:
-                                config.filename = line[quote_start + 1:quote_end]
-            
-            print(f"Server Configuration:")
-            print(f"IP: {config.server_ip}")
-            print(f"Port: {config.server_port}")
-            print(f"Filename: {config.filename}")
-            print()
+                config = json.load(f)
+            if 'server_port' not in config and 'port' in config:
+                config['server_port'] = config['port']
             return config
-            
-        except FileNotFoundError:
-            print(f"Failed to open config file: {config_file}")
-            sys.exit(1)
-        except Exception as e:
-            print(f"Error parsing config file: {e}")
-            sys.exit(1)
-    
+        except:
+            return {"server_ip": "10.0.0.100", "port": 5000, "server_port": 5000}
+
     def load_words_from_file(self):
-        """Load words from the specified file."""
-        try:
-            with open(self.config.filename, 'r') as f:
-                content = f.read().strip()
-                self.words = content.split(',')
-            print(f"Loaded {len(self.words)} words from {self.config.filename}")
-        except FileNotFoundError:
-            print(f"Failed to open file: {self.config.filename}")
-            sys.exit(1)
-    
+        with open("words.txt", 'r') as f:
+            content = f.read().strip()
+            self.words = [word.strip() for word in content.split(',') if word.strip()]
+        print(f"Multithreaded server loaded {len(self.words)} words")
+
     def process_request(self, request: str) -> str:
-        """Process a client request and return the response."""
-        print(f"Received request: {request.strip()}")
-        
+        """Process a single request and return response"""
         try:
-            # Parse request in format "p,k\n"
             parts = request.strip().split(',')
             if len(parts) != 2:
-                return "Invalid request format\n"
-            
+                return "Invalid request\n"
+
             p = int(parts[0])  # offset
             k = int(parts[1])  # number of words
-            
-            print(f"Request: offset={p}, count={k}")
-            
-            # Check if offset is beyond file
+
             if p >= len(self.words):
-                response = "EOF\n"
-            else:
-                # Get k words starting from offset p
-                words_to_send = min(k, len(self.words) - p)
-                reached_eof = (p + k > len(self.words))
-                
-                response_words = []
-                for i in range(words_to_send):
-                    response_words.append(self.words[p + i])
-                
+                return "EOF\n"
+
+            words_to_send = min(k, len(self.words) - p)
+            reached_eof = (p + k >= len(self.words))
+
+            if words_to_send > 0:
+                response_words = self.words[p:p + words_to_send]
                 response = ','.join(response_words)
-                
                 if reached_eof:
                     response += ",EOF"
-                
-                response += "\n"
-            
-            print(f"Sending response: {response.strip()}")
-            return response
-            
-        except (ValueError, IndexError):
-            return "Invalid request format\n"
-    
-    def handle_new_connection(self):
-        """Handle new client connection."""
-        try:
-            client_socket, client_address = self.server_socket.accept()
-            client_socket.setblocking(False)  # Set client socket to non-blocking
-            
-            # Check if we can accept more clients
-            if len(self.client_sockets) >= self.max_clients:
-                print(f"Max clients ({self.max_clients}) reached. Rejecting new client from {client_address}")
-                client_socket.close()
-                return
-            
-            # Add to client list
-            self.client_sockets.append(client_socket)
-            print(f"Client connected from {client_address} (Total clients: {len(self.client_sockets)})")
-            
-        except socket.error as e:
-            print(f"Error accepting new connection: {e}")
-    
-    def handle_client_message(self, client_socket):
-        """Handle message from existing client."""
-        try:
-            data = client_socket.recv(1024)
-            if not data:
-                # Client disconnected
-                print(f"Client disconnected")
-                self.remove_client(client_socket)
-                return
-            
-            request = data.decode('utf-8')
-            
-            # Process the request and get response
-            response = self.process_request(request)
-            
-            # Send response back to client
-            client_socket.send(response.encode('utf-8'))
-            
-            print("*" * 50)
-            
-        except socket.error as e:
-            print(f"Error handling client message: {e}")
-            self.remove_client(client_socket)
-        except UnicodeDecodeError:
-            print("Invalid message format from client")
-            self.remove_client(client_socket)
-    
-    def remove_client(self, client_socket):
-        """Remove client from the list and close socket."""
-        if client_socket in self.client_sockets:
-            self.client_sockets.remove(client_socket)
-            print(f"Removed client (Remaining clients: {len(self.client_sockets)})")
-        try:
-            client_socket.close()
-        except:
-            pass
-    
-    def start_server(self):
-        """Start the server using select() for I/O multiplexing."""
-        try:
-            # Create and configure server socket
-            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.server_socket.setblocking(False)  # Non-blocking mode
-            print(f"Socket created successfully")
-            
-            # Set SO_REUSEADDR
-            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            print("setsockopt(SO_REUSEADDR) successful")
-            
-            # Bind socket
-            server_ip = self.config.server_ip
-            if server_ip == "INADDR_ANY" or server_ip == "":
-                server_ip = ''  # Bind to all interfaces
-            
-            self.server_socket.bind((server_ip, self.config.server_port))
-            print("Socket bind successful")
-            
-            # Listen for connections
-            self.server_socket.listen(self.max_clients)
-            print(f"Server listening on {self.config.server_ip}:{self.config.server_port}")
-            print("Waiting for client connections...")
-            
-            # Main event loop using select()
-            while True:
-                try:
-                    # Prepare socket lists for select()
-                    read_sockets = [self.server_socket] + self.client_sockets
-                    write_sockets = []  # Not needed for this application
-                    error_sockets = [self.server_socket] + self.client_sockets
-                    
-                    # Use select() with timeout
-                    ready_to_read, ready_to_write, in_error = select.select(
-                        read_sockets, write_sockets, error_sockets, 1.0  # 1 second timeout
-                    )
-                    
-                    if ready_to_read or in_error:
-                        print("Data is available now!")
-                        
-                        # Process events sequentially (FIRST-COME-FIRST-SERVE)
-                        
-                        # 1. Check for new connections first
-                        if self.server_socket in ready_to_read:
-                            self.handle_new_connection()
-                        
-                        # 2. Process existing client messages sequentially
-                        for client_socket in ready_to_read:
-                            if client_socket != self.server_socket:
-                                self.handle_client_message(client_socket)
-                        
-                        # 3. Handle error conditions
-                        for client_socket in in_error:
-                            if client_socket != self.server_socket:
-                                print(f"Error condition on client socket")
-                                self.remove_client(client_socket)
-                    else:
-                        # Timeout - no activity
-                        print("Timeout occurred! No data after 1 second.")
-                    
-                except KeyboardInterrupt:
-                    print("\nServer shutting down...")
-                    break
-                except Exception as e:
-                    print(f"Error in main loop: {e}")
-                    
-        except Exception as e:
-            print(f"Server startup error: {e}")
-        finally:
-            self.cleanup()
-    
-    def cleanup(self):
-        """Clean up server resources."""
-        print("Cleaning up server resources...")
-        
-        # Close all client connections
-        for client_socket in self.client_sockets[:]:  # Copy list to avoid modification during iteration
-            self.remove_client(client_socket)
-        
-        # Close server socket
-        if self.server_socket:
-            self.server_socket.close()
-        
-        print("Server shut down")
+            else:
+                response = "EOF"
 
-def main():
-    """Main function to start the server."""
-    server = WordServer()
-    server.start_server()
+            return response + "\n"
+        except:
+            return "Invalid request\n"
+
+    def handle_client_thread(self, client_socket, client_address, client_id):
+        """
+        Handle one client COMPLETELY in this thread.
+        This creates TRUE FCFS behavior - each client is processed sequentially.
+        Greedy clients will monopolize their thread longer!
+        """
+        thread_name = threading.current_thread().name
+        print(f"[{thread_name}] 🔗 Client {client_id} ({client_address}) started")
+
+        try:
+            buffer = ""
+            requests_processed = 0
+            start_time = time.time()
+
+            while True:
+                # Read data from client
+                try:
+                    data = client_socket.recv(4096).decode('utf-8')
+                    if not data:
+                        break  # Client disconnected
+                    buffer += data
+                except:
+                    break
+
+                # Process ALL complete requests in buffer
+                while '\n' in buffer:
+                    request, buffer = buffer.split('\n', 1)
+                    if request.strip():
+                        requests_processed += 1
+
+                        # Process this request
+                        response = self.process_request(request)
+                        client_socket.send(response.encode('utf-8'))
+
+                        # Log every 50 requests to show progress
+                        if requests_processed % 50 == 0:
+                            elapsed = time.time() - start_time
+                            print(f"[{thread_name}] ⚡ Client {client_id}: {requests_processed} requests in {elapsed:.2f}s")
+
+                        # Check if we sent EOF
+                        if "EOF" in response:
+                            print(f"[{thread_name}] 🏁 Client {client_id}: EOF sent after {requests_processed} requests")
+                            break
+
+                if "EOF" in buffer or "EOF" in (response if 'response' in locals() else ""):
+                    break
+
+            end_time = time.time()
+            total_time = end_time - start_time
+            print(f"[{thread_name}] ✅ Client {client_id} completed: {requests_processed} requests in {total_time:.3f}s")
+
+        except Exception as e:
+            print(f"[{thread_name}] ❌ Error handling client {client_id}: {e}")
+        finally:
+            client_socket.close()
+            with self.client_lock:
+                self.client_count -= 1
+            print(f"[{thread_name}] 🔌 Client {client_id} disconnected (Active: {self.client_count})")
+
+    def start_server(self):
+        """Start the multithreaded FCFS server"""
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        server_ip = self.config.get('server_ip', '10.0.0.100')
+        server_port = self.config.get('server_port', 5000)
+
+        self.server_socket.bind((server_ip, server_port))
+        self.server_socket.listen(50)
+
+        print(f"🚀 Multithreaded FCFS server listening on {server_ip}:{server_port}")
+        print("🎯 Each client gets a dedicated thread - TRUE FCFS order!")
+        print("🔥 Greedy clients will monopolize their thread longer!")
+        print("=" * 70)
+
+        try:
+            client_counter = 0
+            while True:
+                # Accept connection (FCFS order)
+                client_socket, address = self.server_socket.accept()
+
+                with self.client_lock:
+                    self.client_count += 1
+                    client_counter += 1
+                    client_id = f"C{client_counter}"
+
+                print(f"\n🔗 New client {client_id} from {address} (Active: {self.client_count})")
+
+                # Create dedicated thread for this client
+                # Thread name indicates FCFS order
+                thread_name = f"FCFS-Client-{client_counter}"
+                client_thread = threading.Thread(
+                    target=self.handle_client_thread,
+                    args=(client_socket, address, client_id),
+                    name=thread_name
+                )
+                client_thread.daemon = True  # Dies when main thread dies
+                client_thread.start()
+
+        except KeyboardInterrupt:
+            print("\n🛑 Server shutting down...")
+        finally:
+            if self.server_socket:
+                self.server_socket.close()
+            print("✅ Server shutdown complete")
 
 if __name__ == "__main__":
-    main()
+    server = MultithreadedWordServer()
+    server.start_server()
