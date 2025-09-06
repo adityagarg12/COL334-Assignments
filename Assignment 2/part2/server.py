@@ -218,7 +218,7 @@ class WordServer:
                     
                     # Use select() with timeout
                     ready_to_read, ready_to_write, in_error = select.select(
-                        read_sockets, write_sockets, error_sockets, 1.0  # 1 second timeout
+                        read_sockets, write_sockets, error_sockets, 0.5  # 1 second timeout
                     )
                     
                     if ready_to_read or in_error:
