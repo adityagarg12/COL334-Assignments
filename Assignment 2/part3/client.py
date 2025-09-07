@@ -30,7 +30,7 @@ class MultithreadedWordClient:
         server_port = self.config.get('server_port', 5000)
         k = self.config.get('k', 5)
 
-        print(f"🚀 Client {self.client_id} (batch={self.batch_size}) connecting to {server_ip}:{server_port}")
+        
 
         try:
             client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

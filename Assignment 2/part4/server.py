@@ -1,229 +1,226 @@
+#!/usr/bin/env python3
+# server.py -- Round-Robin central scheduler
+
 import socket
-import select
-import sys
-from typing import List
+import threading
+import json
+import time
+import collections
 
-
-class Config:
-    def __init__(self):
-        self.server_ip = ""
-        self.server_port = 0
-        self.filename = ""
-
-class WordServer:
-    def __init__(self, config_file: str = "config.json"):
-        """Initialize the server with configuration."""
+class RoundRobinServer:
+    def __init__(self, config_file="config.json"):
         self.config = self.load_config(config_file)
         self.words = []
         self.load_words_from_file()
         self.server_socket = None
-        self.client_sockets = []  # List to track connected clients in a fixed order
-        self.max_clients = 32
-        
-        # NEW: Index to track the next client to serve for round-robin
-        self.next_client_index = 0
 
-    # The load_config, load_words_from_file, process_request,
-    # handle_new_connection, handle_client_message, remove_client,
-    # and cleanup methods are IDENTICAL to the previous version.
-    # The only significant change is in the main loop of start_server.
+        # clients: client_id -> { 'sock': socket, 'queue': deque(), 'alive': True }
+        self.clients = {}
+        self.clients_lock = threading.Lock()
+        self.client_order = []  # order for round-robin (list of client_ids)
+        self.next_index = 0
 
-    def load_config(self, config_file: str) -> Config:
-        """Load configuration from JSON file using custom parser."""
-        config = Config()
+        # optional: small per-request delay to magnify scheduling effects while debugging
+        self.processing_delay = 0.0  # set to e.g. 0.005 to make RR effects obvious
+
+    def load_config(self, cfg):
         try:
-            with open(config_file, 'r') as f:
-                lines = f.readlines()
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                if '"server_ip"' in line:
-                    colon_pos = line.find(':')
-                    if colon_pos != -1:
-                        quote_start = line.find('"', colon_pos)
-                        if quote_start != -1:
-                            quote_end = line.find('"', quote_start + 1)
-                            if quote_end != -1:
-                                config.server_ip = line[quote_start + 1:quote_end]
-                elif '"server_port"' in line:
-                    colon_pos = line.find(':')
-                    if colon_pos != -1:
-                        num_str = line[colon_pos + 1:]
-                        clean_num = "".join(c for c in num_str if c.isdigit())
-                        if clean_num:
-                            config.server_port = int(clean_num)
-                elif '"filename"' in line:
-                    colon_pos = line.find(':')
-                    if colon_pos != -1:
-                        quote_start = line.find('"', colon_pos)
-                        if quote_start != -1:
-                            quote_end = line.find('"', quote_start + 1)
-                            if quote_end != -1:
-                                config.filename = line[quote_start + 1:quote_end]
-            print(f"Server Configuration:\nIP: {config.server_ip}\nPort: {config.server_port}\nFilename: {config.filename}\n")
-            return config
-        except FileNotFoundError:
-            print(f"Failed to open config file: {config_file}")
-            sys.exit(1)
+            with open(cfg, "r") as f:
+                conf = json.load(f)
+            if 'server_port' not in conf and 'port' in conf:
+                conf['server_port'] = conf['port']
+            return conf
+        except:
+            # defaults
+            return {"server_ip": "0.0.0.0", "server_port": 5000}
 
     def load_words_from_file(self):
-        """Load words from the specified file."""
         try:
-            with open(self.config.filename, 'r') as f:
+            with open("words.txt", "r") as f:
                 content = f.read().strip()
-                self.words = content.split(',')
-            print(f"Loaded {len(self.words)} words from {self.config.filename}")
-        except FileNotFoundError:
-            print(f"Failed to open file: {self.config.filename}")
-            sys.exit(1)
+                self.words = [w.strip() for w in content.split(",") if w.strip()]
+        except Exception as e:
+            print("Could not load words.txt:", e)
+            self.words = []
 
-    def process_request(self, request: str) -> str:
-        """Process a client request and return the response."""
-        print(f"Received request: {request.strip()}")
+    def process_request(self, request: str):
+        # same semantics as earlier: "p,k" -> words from p up to k words, append EOF if end
         try:
-            parts = request.strip().split(',')
+            parts = request.strip().split(",")
             if len(parts) != 2:
-                return "Invalid request format\n"
+                return "Invalid request"
             p = int(parts[0])
             k = int(parts[1])
-            print(f"Request: offset={p}, count={k}")
-            if p >= len(self.words):
-                response = "EOF\n"
-            else:
-                words_to_send = min(k, len(self.words) - p)
-                reached_eof = (p + k >= len(self.words))
-                response_words = self.words[p : p + words_to_send]
-                response = ','.join(response_words)
-                if reached_eof:
-                    response += ",EOF"
-                response += "\n"
-            print(f"Sending response: {response.strip()}")
-            return response
-        except (ValueError, IndexError):
-            return "Invalid request format\n"
+        except:
+            return "Invalid request"
 
-    def handle_new_connection(self):
-        """Handle new client connection."""
+        if p >= len(self.words):
+            return "EOF"
+
+        take = min(k, len(self.words) - p)
+        resp = ",".join(self.words[p:p+take])
+        if p + k >= len(self.words):
+            resp += ",EOF"
+        return resp
+
+    def client_reader(self, client_sock, address, client_id):
+        """
+        Reads from the socket, collects newline-terminated requests,
+        and enqueues them into that client's queue.
+        """
+        thread_name = threading.current_thread().name
+        print(f"[{thread_name}] Reader started for {client_id} {address}")
+        buff = ""
         try:
-            client_socket, client_address = self.server_socket.accept()
-            client_socket.setblocking(False)
-            if len(self.client_sockets) >= self.max_clients:
-                print(f"Max clients ({self.max_clients}) reached. Rejecting new client from {client_address}")
-                client_socket.close()
-                return
-            self.client_sockets.append(client_socket)
-            print(f"Client connected from {client_address} (Total clients: {len(self.client_sockets)})")
-        except socket.error as e:
-            print(f"Error accepting new connection: {e}")
+            while True:
+                data = client_sock.recv(4096)
+                if not data:
+                    break
+                buff += data.decode('utf-8')
+                while '\n' in buff:
+                    line, buff = buff.split('\n', 1)
+                    if not line.strip():
+                        continue
+                    with self.clients_lock:
+                        entry = self.clients.get(client_id)
+                        if entry and entry['alive']:
+                            entry['queue'].append(line.strip())
+                        else:
+                            # client not present/closed
+                            pass
+        except Exception as e:
+            print(f"[{thread_name}] Read error {client_id}: {e}")
+        finally:
+            # mark client dead; processor will clean socket
+            with self.clients_lock:
+                entry = self.clients.get(client_id)
+                if entry:
+                    entry['alive'] = False
+            print(f"[{thread_name}] Reader exiting for {client_id}")
 
-    def handle_client_message(self, client_socket):
-        """Handle message from existing client."""
-        try:
-            data = client_socket.recv(1024)
-            if not data:
-                print("Client disconnected")
-                self.remove_client(client_socket)
-                return
-            request = data.decode('utf-8')
-            response = self.process_request(request)
-            client_socket.send(response.encode('utf-8'))
-            print("*" * 50)
-        except socket.error as e:
-            print(f"Error handling client message: {e}")
-            self.remove_client(client_socket)
-
-    def remove_client(self, client_socket):
-        """Remove client from the list and close socket."""
-        if client_socket in self.client_sockets:
-            # Get index before removing to adjust the round-robin pointer
-            idx = self.client_sockets.index(client_socket)
-            self.client_sockets.remove(client_socket)
-            
-            # If the removed client was before or at the current pointer,
-            # the pointer needs to be shifted back to maintain order.
-            if idx < self.next_client_index:
-                self.next_client_index -= 1
-            # Ensure the pointer is valid after any removal
-            if self.client_sockets and self.next_client_index >= len(self.client_sockets):
-                self.next_client_index = 0
-
-            print(f"Removed client (Remaining clients: {len(self.client_sockets)})")
-        try:
-            client_socket.close()
-        except socket.error:
-            pass
-            
-    def start_server(self):
-        """Start the server using select() for I/O multiplexing."""
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.setblocking(False)
-        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        
-        server_ip = self.config.server_ip if self.config.server_ip != "INADDR_ANY" else ''
-        self.server_socket.bind((server_ip, self.config.server_port))
-        self.server_socket.listen(self.max_clients)
-        print(f"Server listening on {self.config.server_ip}:{self.config.server_port}")
+    def rr_processor(self):
+        """Round-robin processor: serve one request per client, rotate."""
+        thread_name = threading.current_thread().name
+        print(f"[{thread_name}] RR processor started")
 
         while True:
+            with self.clients_lock:
+                alive_clients = [cid for cid in self.client_order if cid in self.clients and self.clients[cid]['alive'] or (cid in self.clients and len(self.clients[cid]['queue'])>0)]
+                # reorder client_order: remove dead ones
+                if set(alive_clients) != set(self.client_order):
+                    self.client_order = [c for c in self.client_order if c in alive_clients]
+
+                if not self.client_order:
+                    # no clients currently: sleep and continue
+                    pass
+
+                # pick next client index safely
+                if self.client_order:
+                    if self.next_index >= len(self.client_order):
+                        self.next_index = 0
+                    client_id = self.client_order[self.next_index]
+                else:
+                    client_id = None
+
+            if client_id is None:
+                time.sleep(0.01)
+                continue
+
+            # serve at most one request for this client
+            served = False
+            with self.clients_lock:
+                entry = self.clients.get(client_id)
+                if entry and len(entry['queue']) > 0:
+                    request = entry['queue'].popleft()
+                    sock = entry['sock']
+                    served = True
+                else:
+                    request = None
+                    sock = None
+
+            if served and request is not None:
+                # optional small delay to exaggerate scheduling
+                if self.processing_delay:
+                    time.sleep(self.processing_delay)
+
+                try:
+                    response = self.process_request(request)
+                    to_send = response + "\n"
+                    try:
+                        sock.sendall(to_send.encode('utf-8'))
+                    except Exception:
+                        pass
+
+                    if "EOF" in response:
+                        # close and cleanup this client
+                        with self.clients_lock:
+                            entry = self.clients.get(client_id)
+                            if entry:
+                                try:
+                                    entry['sock'].shutdown(socket.SHUT_RDWR)
+                                    entry['sock'].close()
+                                except:
+                                    pass
+                                entry['alive'] = False
+                                # we will remove from client_order on next loop
+                except Exception as e:
+                    print(f"[{thread_name}] Error processing {client_id}: {e}")
+
+                # advance rr pointer to next client
+                with self.clients_lock:
+                    self.next_index += 1
+                    if self.next_index >= max(1, len(self.client_order)):
+                        self.next_index = 0
+                continue
+
+            # if we didn't serve (no queued request for this client), advance pointer
+            with self.clients_lock:
+                self.next_index += 1
+                if self.next_index >= max(1, len(self.client_order)):
+                    self.next_index = 0
+
+            # if nobody had anything, sleep a bit to avoid busy-spin
+            time.sleep(0.001)
+
+    def start_server(self):
+        ip = self.config.get('server_ip', '0.0.0.0')
+        port = self.config.get('server_port', 5000)
+
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.bind((ip, port))
+        self.server_socket.listen(50)
+        print(f"RR Server listening on {ip}:{port}")
+
+        # start processor thread
+        proc = threading.Thread(target=self.rr_processor, name="RR-Processor", daemon=True)
+        proc.start()
+
+        client_idx = 0
+        try:
+            while True:
+                client_sock, address = self.server_socket.accept()
+                client_idx += 1
+                client_id = f"C{client_idx}"
+                print(f"New client {client_id} from {address}")
+
+                with self.clients_lock:
+                    self.clients[client_id] = {'sock': client_sock, 'queue': collections.deque(), 'alive': True}
+                    self.client_order.append(client_id)
+
+                reader = threading.Thread(target=self.client_reader, args=(client_sock, address, client_id),
+                                          name=f"Reader-{client_id}", daemon=True)
+                reader.start()
+        except KeyboardInterrupt:
+            print("Shutting down server...")
+        finally:
             try:
-                read_sockets = [self.server_socket] + self.client_sockets
-                
-                ready_to_read, _, _ = select.select(read_sockets, [], [], 1.0)
-                
-                # 1. Always check for new connections first
-                if self.server_socket in ready_to_read:
-                    self.handle_new_connection()
-                
-                # --- START OF ROUND-ROBIN LOGIC ---
-                # 2. Serve ONE client based on the round-robin schedule.
-                if self.client_sockets: # Only proceed if there are clients
-                    # Iterate through all clients once, starting from the next one in line
-                    for _ in range(len(self.client_sockets)):
-                        client_to_check = self.client_sockets[self.next_client_index]
-                        
-                        # Check if it's this client's turn AND if they have sent data
-                        if client_to_check in ready_to_read:
-                            self.handle_client_message(client_to_check)
-                            
-                            # A client might disconnect in handle_client_message,
-                            # so we check if the list is still valid.
-                            if not self.client_sockets:
-                                self.next_client_index = 0
-                                break
-                                
-                            # Move pointer to the next client for the next round
-                            self.next_client_index = (self.next_client_index + 1) % len(self.client_sockets)
-                            
-                            # IMPORTANT: Break after serving one client
-                            break 
-                        else:
-                            # If this client has no data, move the pointer to check the next one
-                            self.next_client_index = (self.next_client_index + 1) % len(self.client_sockets)
-                # --- END OF ROUND-ROBIN LOGIC ---
-
-            except KeyboardInterrupt:
-                print("\nServer shutting down...")
-                break
-            except Exception as e:
-                print(f"Error in main loop: {e}")
-        
-        self.cleanup()
-
-    def cleanup(self):
-        """Clean up server resources."""
-        print("Cleaning up server resources...")
-        for client_socket in self.client_sockets[:]:
-            self.remove_client(client_socket)
-        if self.server_socket:
-            self.server_socket.close()
-        print("Server shut down")
-
-def main():
-    """Main function to start the server."""
-    # Assuming config.json is in the same directory
-    server = WordServer(config_file="config.json")
-    server.start_server()
+                self.server_socket.close()
+            except:
+                pass
 
 if __name__ == "__main__":
-    main()
+    server = RoundRobinServer()
+    # optionally set a small delay to make RR effects visible while debugging
+    # server.processing_delay = 0.005
+    server.start_server()
