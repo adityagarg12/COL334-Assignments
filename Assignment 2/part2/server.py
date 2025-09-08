@@ -157,10 +157,8 @@ class WordServer:
             
             request = data.decode('utf-8')
             
-            # Process the request and get response
             response = self.process_request(request)
             
-            # Send response back to client
             client_socket.send(response.encode('utf-8'))
             
             print("*" * 50)
@@ -187,7 +185,7 @@ class WordServer:
         try:
             # Create and configure server socket
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.server_socket.setblocking(False)  # Non-blocking mode
+            self.server_socket.setblocking(False)  
             print(f"Socket created successfully")
             
             # Set SO_REUSEADDR
@@ -197,17 +195,17 @@ class WordServer:
             # Bind socket
             server_ip = self.config.server_ip
             if server_ip == "INADDR_ANY" or server_ip == "":
-                server_ip = ''  # Bind to all interfaces
+                server_ip = '' 
             
             self.server_socket.bind((server_ip, self.config.server_port))
             print("Socket bind successful")
             
-            # Listen for connections
+            
             self.server_socket.listen(self.max_clients)
             print(f"Server listening on {self.config.server_ip}:{self.config.server_port}")
           
             
-            # Main event loop using select()
+            
             while True:
                 try:
                     # Prepare socket lists for select()

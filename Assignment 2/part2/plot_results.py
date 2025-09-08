@@ -15,7 +15,7 @@ if os.path.exists(output_plot):
         os.remove(output_plot)
         print(f"Removed old plot: {output_plot}")
     except PermissionError:
-        print(f"⚠️ Permission error removing old plot. Try: sudo rm {output_plot}")
+        print(f"Permission error removing old plot. Try: sudo rm {output_plot}")
         exit(1)
 
 clients = []
@@ -38,4 +38,4 @@ plt.grid(True)
 plt.savefig(output_plot)
 plt.show()
 
-print(f"\n✅ Plot saved as {output_plot}")
+print(f"\nPlot saved as {output_plot}")

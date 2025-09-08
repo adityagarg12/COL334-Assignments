@@ -4,5 +4,5 @@
   "k": 5,
   "p": 0,
   "filename": "words.txt",
-  "num_clients": 8
+  "num_clients": 32
 }
