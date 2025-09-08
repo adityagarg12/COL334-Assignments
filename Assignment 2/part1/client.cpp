@@ -13,6 +13,8 @@
 
 using namespace std;
 
+bool quiet_mode = false;
+
 struct Config {
     string server_ip;
     int server_port;
@@ -100,7 +102,7 @@ vector<string> ParseResponse(const string& response) {
 }
 
 void DisplayWordFrequencies(const map<string, int>& wordFrequency) {
-    cout << "\n=== Final Word Frequencies ===" << endl;
+    cout << "\nFinal Word Frequencies" << endl;
     if (wordFrequency.empty()) {
         cout << "No words received." << endl;
     } else {
@@ -119,14 +121,23 @@ int main(int argc, char* argv[]) {
             break;
         }
     }
+
+    for (int i = 1; i < argc; ++i) {
+        if (string(argv[i]) == "--quiet") {
+            quiet_mode = true;
+            break;
+        }
+    }
     
     Config config = LoadConfig(configFile);
-    cout << "Client Configuration:" << endl;
-    cout << "Server IP: " << config.server_ip << endl;
-    cout << "Server Port: " << config.server_port << endl;
-    cout << "Initial Request: p=" << config.p << ", k=" << config.k << endl;
-    cout << "File: " << config.filename << endl << endl;
     
+    if(!quiet_mode){
+        cout << "Client Configuration:" << endl;
+        cout << "Server IP: " << config.server_ip << endl;
+        cout << "Server Port: " << config.server_port << endl;
+        cout << "Initial Request: p=" << config.p << ", k=" << config.k << endl;
+        cout << "File: " << config.filename << endl << endl;
+    }
     // Create socket
     int nClientSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (nClientSocket < 0) {
@@ -144,7 +155,6 @@ int main(int argc, char* argv[]) {
     
     // Connect to server
     int nRet = connect(nClientSocket, (struct sockaddr*)&srv, sizeof(srv));
-    cout << nRet << endl;
     if (nRet < 0) {
         cerr << "Connection to server failed" << endl;
         close(nClientSocket);
@@ -162,19 +172,21 @@ int main(int argc, char* argv[]) {
     bool eof_reached = false;
     map<string, int> totalWordFrequency;
     int total_words_received = 0;
-    
-    cout << "\n=== Starting continuous requests until EOF ===" << endl;
-    
+        
     // Loop until EOF is reached
     while (!eof_reached) {
         request_count++;
         
         // Send request in format "p,k\n"
         string request = to_string(current_offset) + "," + to_string(config.k) + "\n";
-        cout << "\n--- Request #" << request_count << " ---" << endl;
-        cout << "Sending request: offset=" << current_offset << ", count=" << config.k << endl;
-        
+
+        if (!quiet_mode) {
+            cout << "\n Request #" << request_count<< endl;
+            cout << "Sending request: offset=" << current_offset << ", count=" << config.k << endl;
+        }
+
         int bytes_sent = send(nClientSocket, request.c_str(), request.length(), 0);
+
         if (bytes_sent < 0) {
             cerr << "Failed to send request" << endl;
             break;
@@ -190,54 +202,65 @@ int main(int argc, char* argv[]) {
         
         buffer[bytesReceived] = '\0';
         string response(buffer);
-        cout << "Received response: " << response;
+
+        if (!quiet_mode) {
+            cout << "Received response: " << response;
+        }
 
         // Check for EOF cases
         if (response == "EOF\n") {
-            cout << "EOF reached - no more words available." << endl;
+            
+            if(!quiet_mode){
+                cout << "EOF reached" << endl;
+            } 
             eof_reached = true;
-        } else if (response.find("EOF") != string::npos) {
-            cout << "EOF reached in response - processing final words." << endl;
+        } 
+        else if (response.find("EOF") != string::npos) {
+            if(!quiet_mode){
+                cout << "EOF found in response " << endl;
+            }
             eof_reached = true;
             
             // Process words before EOF
             vector<string> words = ParseResponse(response);
-            cout << "Received " << words.size() << " words in final batch: ";
+
             for (const string& word : words) {
-                cout << word << " ";
+
+                if(!quiet_mode) cout << word << " ";
+
                 totalWordFrequency[word]++;
                 total_words_received++;
             }
             cout << endl;
-        } else {
+        } 
+        else {
             // Normal response - parse all words
             vector<string> words = ParseResponse(response);
-            cout << "Received " << words.size() << " words: ";
+            
             for (const string& word : words) {
-                cout << "word="<< word ;
+                if(!quiet_mode) cout << word << " " ;
+
                 totalWordFrequency[word]++;
-                if (word == "cow") {
-                    cout << "frequency= " << totalWordFrequency[word] << " ";
-                }
                 total_words_received++;
             }
-            cout << endl;
-            
+            if(!quiet_mode) {
+                cout << endl;
+            }
+
             // Update offset for next request
             current_offset += words.size();
         }
         
-        cout << "Total words received so far: " << total_words_received << endl;
     }
     
     // End time
     auto end_time = std::chrono::high_resolution_clock::now();
+    
     std::chrono::duration<double, std::milli> elapsed = end_time - start_time;
     
     // Display final results
-    cout << "\n=== Summary ===" << endl;
-    cout << "Total requests sent: " << request_count << endl;
-    cout << "Total words received: " << total_words_received << endl;
+    
+    if(!quiet_mode) cout << "Total words received: " << total_words_received << endl;
     
     // Display word frequencies
     DisplayWordFrequencies(totalWordFrequency);

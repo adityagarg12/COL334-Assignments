@@ -2,17 +2,19 @@
 
 .PHONY: plot run clean
 
+
 # The 'plot' target first ensures the results are generated, then creates the plot.
 plot: part3_results.csv
+	sudo python3 run_experiments.py
 	python3 plot_results.py
 
 # This rule defines how to create the results file by running the experiment script.
 part3_results.csv:
-	python3 runner.py
+	sudo python3 runner.py
 
 # The 'run' target executes the experiment without creating a plot.
-run:
-	python3 runner.py
+run-fcfs:
+	sudo python3 runner.py
 
 # The 'clean' target removes all generated files and directories.
 clean:

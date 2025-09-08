@@ -56,7 +56,7 @@ class WordClient:
         return total_word_frequency
 
     def run_greedy(self) -> Dict[str, int]:
-        """Greedy client: sends c requests back-to-back"""
+      
         total_word_frequency = defaultdict(int)
         current_offset = self.config.p
 
@@ -94,7 +94,7 @@ class WordClient:
         return freqs, end - start
 
 def main():
-    # If run with argument "greedy", this client will be greedy
+
     greedy = (len(sys.argv) > 1 and sys.argv[1] == "greedy")
     client = WordClient(greedy=greedy)
     freqs, t = client.run()

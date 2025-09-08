@@ -1,11 +1,22 @@
+
+# STARTER CODE ONLY. EDIT AS DESIRED
+#!/usr/bin/env python3
 import re
+import time
+import csv
+from pathlib import Path
+from topo_wordcount import make_net
+
+# Config
+K_VALUES = [1, 2, 5, 10, 20, 50, 100]   
+RUNS_PER_K = 5
+SERVER_CMD = "./server --config config.json --quiet"
+CLIENT_CMD_TMPL = "./client --config config.json --quiet"
+
+RESULTS_CSV = Path("p1_results.csv")
 
 def modify_config(key, value, config_path="config.json"):
-    """
-    Update the value of a key in a JSON config file (compact or pretty format),
-    ignoring and preserving any trailing newlines after the closing brace.
-    Does not use the json module.
-    """
+   
     with open(config_path, "r") as f:
         content = f.read()
     # Save trailing newlines (if any)
@@ -18,7 +29,7 @@ def modify_config(key, value, config_path="config.json"):
     # For compact format, ignore any trailing newlines after the closing brace
     compact_match = re.match(r'\s*{.*}\s*$', content)
     if compact_match and "\n" not in content.strip():
-        # Compact format: {"key1": val1, "key2": val2, ...}
+       
         pattern = rf'("{key}"\s*:\s*)([^,}}]+)'
         new_content, count = re.subn(pattern, rf'\1{value}', content)
         if count == 0:
@@ -26,7 +37,7 @@ def modify_config(key, value, config_path="config.json"):
             new_content = re.sub(r'(})$', rf', "{key}": {value}\1', content)
         content = new_content
     else:
-        # Pretty format: each key-value on its own line
+       
         lines = content.splitlines(keepends=True)
         new_lines = []
         key_found = False
@@ -46,24 +57,22 @@ def modify_config(key, value, config_path="config.json"):
                     new_lines.insert(i, f'{indent}"{key}": {value},\n')
                     break
         content = "".join(new_lines)
-    # Write back, restore trailing newlines (ignoring any after closing brace for compact)
+
     with open(config_path, "w") as f:
         f.write(content.rstrip() + trailing_newlines)
-# STARTER CODE ONLY. EDIT AS DESIRED
-#!/usr/bin/env python3
-import re
-import time
-import csv
-from pathlib import Path
-from topo_wordcount import make_net
 
-# Config
-K_VALUES = [1, 2, 5, 10, 20, 50, 100]   
-RUNS_PER_K = 5
-SERVER_CMD = "./server --config config.json"
-CLIENT_CMD_TMPL = "./client --config config.json --quiet"
 
-RESULTS_CSV = Path("results.csv")
+def get_num_repetitions(config_path="config.json"):
+    with open(config_path, "r") as f:
+        content = f.read()
+    m = re.search(r'"num_repetitions"\s*:\s*(\d+)', content)
+    if m:
+        return int(m.group(1))
+    return None
+
+num_reps = get_num_repetitions()
+if num_reps is not None:
+    RUNS_PER_K = num_reps
 
 def main():
     # Prepare CSV
@@ -77,10 +86,14 @@ def main():
 
     h1 = net.get('h1')  # client
     h2 = net.get('h2')  # server
+   
+    config_content = Path("config.json").read_text()
+    m = re.search(r'"filename"\s*:\s*"([^"]+)"', config_content)
+    input_filename = m.group(1) if m else None
 
-    # Ensure words.txt exists (shared FS)
-    if not Path("words.txt").exists():
-        Path("words.txt").write_text("cat,bat,cat,dog,dog,emu,emu,emu,ant\n")
+    # Ensure input file exists (shared FS)
+    if input_filename and not Path(input_filename).exists():
+        Path(input_filename).write_text("cat,bat,cat,dog,dog,emu,emu,emu,ant\n")
 
     # # Start server
     # srv = h2.popen(SERVER_CMD, shell=True   , stdout=None, stderr=None)

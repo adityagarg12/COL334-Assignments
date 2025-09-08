@@ -3,7 +3,7 @@
   "port": 5000,
   "k": 5,
   "p": 0,
-  "filename": "words.txt",
-  "num_clients": 10,
+  "filename": "word.txt",
+  "num_clients": 5,
   "c": 10
 }

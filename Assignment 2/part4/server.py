@@ -3,7 +3,7 @@
 
 import socket
 import threading
-import json
+# import json
 import time
 import collections
 
@@ -14,37 +14,74 @@ class RoundRobinServer:
         self.load_words_from_file()
         self.server_socket = None
 
-        # clients: client_id -> { 'sock': socket, 'queue': deque(), 'alive': True }
+       
         self.clients = {}
         self.clients_lock = threading.Lock()
         self.client_order = []  # order for round-robin (list of client_ids)
         self.next_index = 0
 
-        # optional: small per-request delay to magnify scheduling effects while debugging
-        self.processing_delay = 0.0  # set to e.g. 0.005 to make RR effects obvious
+        
+        self.processing_delay = 0.0 
 
-    def load_config(self, cfg):
+    def load_config(self, config_file: str) -> dict:
+        config = {
+            "server_ip": "0.0.0.0",
+            "server_port": 5000
+        }
         try:
-            with open(cfg, "r") as f:
-                conf = json.load(f)
-            if 'server_port' not in conf and 'port' in conf:
-                conf['server_port'] = conf['port']
-            return conf
+            with open(config_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("//"):
+                        continue
+                    if '"server_ip"' in line:
+                        colon = line.find(":")
+                        quote1 = line.find('"', colon)
+                        quote2 = line.find('"', quote1 + 1)
+                        if quote1 != -1 and quote2 != -1:
+                            config["server_ip"] = line[quote1 + 1:quote2]
+                    elif '"server_port"' in line:
+                        colon = line.find(":")
+                        num = ''.join(c for c in line[colon+1:] if c.isdigit())
+                        if num:
+                            config["server_port"] = int(num)
+                    elif '"port"' in line:
+                        colon = line.find(":")
+                        num = ''.join(c for c in line[colon+1:] if c.isdigit())
+                        if num:
+                            config["server_port"] = int(num)
+                    elif '"k"' in line:
+                        colon = line.find(":")
+                        num = ''.join(c for c in line[colon+1:] if c.isdigit())
+                        if num:
+                            config["k"] = int(num)
+                    elif '"p"' in line:
+                        colon = line.find(":")
+                        num = ''.join(c for c in line[colon+1:] if c.isdigit())
+                        if num:
+                            config["p"] = int(num)
+                    elif '"filename"' in line:
+                        colon = line.find(":")
+                        quote1 = line.find('"', colon)
+                        quote2 = line.find('"', quote1 + 1)
+                        if quote1 != -1 and quote2 != -1:
+                            config["filename"] = line[quote1 + 1:quote2]
+            return config
         except:
-            # defaults
-            return {"server_ip": "0.0.0.0", "server_port": 5000}
+            return config
 
     def load_words_from_file(self):
         try:
-            with open("words.txt", "r") as f:
+            filename = self.config.get("filename", "words.txt")
+            with open(filename, "r") as f:
                 content = f.read().strip()
                 self.words = [w.strip() for w in content.split(",") if w.strip()]
         except Exception as e:
-            print("Could not load words.txt:", e)
+            print(f"Could not load {filename}:", e)
             self.words = []
 
     def process_request(self, request: str):
-        # same semantics as earlier: "p,k" -> words from p up to k words, append EOF if end
+
         try:
             parts = request.strip().split(",")
             if len(parts) != 2:
@@ -64,12 +101,9 @@ class RoundRobinServer:
         return resp
 
     def client_reader(self, client_sock, address, client_id):
-        """
-        Reads from the socket, collects newline-terminated requests,
-        and enqueues them into that client's queue.
-        """
+       
         thread_name = threading.current_thread().name
-        print(f"[{thread_name}] Reader started for {client_id} {address}")
+        
         buff = ""
         try:
             while True:
@@ -86,7 +120,7 @@ class RoundRobinServer:
                         if entry and entry['alive']:
                             entry['queue'].append(line.strip())
                         else:
-                            # client not present/closed
+                        
                             pass
         except Exception as e:
             print(f"[{thread_name}] Read error {client_id}: {e}")
@@ -96,12 +130,12 @@ class RoundRobinServer:
                 entry = self.clients.get(client_id)
                 if entry:
                     entry['alive'] = False
-            print(f"[{thread_name}] Reader exiting for {client_id}")
+            
 
     def rr_processor(self):
-        """Round-robin processor: serve one request per client, rotate."""
+      
         thread_name = threading.current_thread().name
-        print(f"[{thread_name}] RR processor started")
+       
 
         while True:
             with self.clients_lock:
@@ -221,6 +255,4 @@ class RoundRobinServer:
 
 if __name__ == "__main__":
     server = RoundRobinServer()
-    # optionally set a small delay to make RR effects visible while debugging
-    # server.processing_delay = 0.005
     server.start_server()

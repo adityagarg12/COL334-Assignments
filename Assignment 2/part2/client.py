@@ -14,11 +14,11 @@ class Config:
 
 class WordClient:
     def __init__(self, config_file: str = "config.json"):
-        """Initialize the client with configuration."""
+       
         self.config = self.load_config(config_file)
         
     def load_config(self, config_file: str) -> Config:
-        """Load configuration from JSON file using custom parser."""
+       
         config = Config()
         
         try:
@@ -98,7 +98,7 @@ class WordClient:
             sys.exit(1)
     
     def parse_response(self, response: str) -> list:
-        """Parse the server response and extract words."""
+       
         words = []
         if response.strip():
             word_list = response.strip().split(',')
@@ -111,8 +111,8 @@ class WordClient:
         return words
     
     def display_word_frequencies(self, word_frequency: Dict[str, int]):
-        """Display the word frequencies."""
-        print("\n=== Final Word Frequencies ===")
+      
+        print("\nFinal Word Frequencies")
         if not word_frequency:
             print("No words received.")
         else:
@@ -120,7 +120,7 @@ class WordClient:
                 print(f"{word}, {count}")
     
     def connect_and_request_continuously(self) -> Dict[str, int]:
-        """Connect to server, send multiple requests until EOF, and disconnect."""
+      
         total_word_frequency = defaultdict(int)
         client_socket = None
         
@@ -139,15 +139,13 @@ class WordClient:
             eof_reached = False
             total_words_received = 0
             
-            print("\n=== Starting continuous requests until EOF ===")
-            
             # Loop until EOF is reached
             while not eof_reached:
                 request_count += 1
                 
                 # Send request in format "p,k\n"
                 request = f"{current_offset},{self.config.k}\n"
-                print(f"\n--- Request #{request_count} ---")
+                print(f"\nRequest #{request_count}")
                 print(f"Sending request: offset={current_offset}, count={self.config.k}")
                 
                 client_socket.send(request.encode('utf-8'))
@@ -158,21 +156,21 @@ class WordClient:
                 
                 # Check for EOF cases
                 if response.strip() == "EOF":
-                    print("EOF reached - no more words available.")
+                    print("EOF reached")
                     eof_reached = True
                 elif "EOF" in response:
-                    print("EOF reached in response - processing final words.")
+                    print("EOF found in response")
                     eof_reached = True
                     # Process words before EOF
                     words = self.parse_response(response)
-                    print(f"Received {len(words)} words in final batch: {' '.join(words[:10])}" + ("..." if len(words) > 10 else ""))
+                    
                     for word in words:
                         total_word_frequency[word] += 1
                         total_words_received += 1
                 else:
                     # Normal response - parse all words
                     words = self.parse_response(response)
-                    print(f"Received {len(words)} words: {' '.join(words[:10])}" + ("..." if len(words) > 10 else ""))
+                   
                     for word in words:
                         total_word_frequency[word] += 1
                         total_words_received += 1
@@ -180,10 +178,7 @@ class WordClient:
                     # Update offset for next request
                     current_offset += len(words)
                 
-                print(f"Total words received so far: {total_words_received}")
-            
-            print(f"\n=== Summary ===")
-            print(f"Total requests sent: {request_count}")
+               
             print(f"Total words received: {total_words_received}")
             
         except ConnectionRefusedError:
@@ -203,7 +198,7 @@ class WordClient:
         return dict(total_word_frequency)
     
     def run(self) -> tuple:
-        """Run the client and return word frequencies and completion time."""
+      
         start_time = time.time()
         word_frequencies = self.connect_and_request_continuously()
         end_time = time.time()
@@ -217,7 +212,6 @@ class WordClient:
         return word_frequencies, completion_time
 
 def main():
-    """Main function to run a single client."""
     client = WordClient()
     client.run()
 

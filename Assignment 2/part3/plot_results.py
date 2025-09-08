@@ -8,10 +8,7 @@ default_csv = 'part3_results.csv'
 default_plot = 'p3_plot.png'
 
 def plot_results(csv_file=default_csv, plot_file=default_plot):
-    """
-    Reads data from a CSV file and generates a plot of JFI vs. c
-    without using the pandas library.
-    """
+   
     # Check if the CSV file exists
     if not os.path.exists(csv_file):
         print(f"Error: CSV file not found at '{csv_file}'")
@@ -74,11 +71,11 @@ def plot_results(csv_file=default_csv, plot_file=default_plot):
     
     plt.tight_layout()
 
-    # Save plot as 'plot_part3.png' regardless of plot_file argument
-    output_plot = 'plot_part3.png'
+   
+    output_plot = 'p3_plot.png'
     
     # Ensure the output directory exists if specified in the path
-    output_dir = os.path.dirname(plot_file)
+    output_dir = os.path.dirname(output_plot)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
@@ -87,8 +84,8 @@ def plot_results(csv_file=default_csv, plot_file=default_plot):
 
 
 if __name__ == "__main__":
-    # Use the first command-line argument as the csv_file, or use the default
+
     csv_input_file = sys.argv[1] if len(sys.argv) > 1 else default_csv
     
-    # Call the plotting function. The second argument is ignored per the original script's logic.
-    plot_results(csv_input_file, 'plot_part3.png')
+    
+    plot_results(csv_input_file, 'p3_plot.png')

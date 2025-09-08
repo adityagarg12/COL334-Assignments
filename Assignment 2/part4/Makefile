@@ -7,16 +7,17 @@ all: plot
 
 # Runs the full experiment for c=1 to 10 and generates the results CSV.
 run-rr:
-	python3 runner.py
+	sudo python3 runner.py
 
 # The 'plot' target depends on the results file being created first.
 # It runs the experiment and then immediately creates the plot.
 plot: part4_results.csv
+	sudo python3 run_experiments.py
 	python3 plot_results.py
 
 # This rule tells 'make' how to create the results file.
 part4_results.csv: runner.py client.py server.py topology.py
-	python3 runner.py
+	sudo python3 runner.py
 
 # Clean up generated files
 clean:

@@ -1,5 +1,5 @@
 import socket
-import json
+# import json
 import time
 import threading
 import sys
@@ -15,17 +15,57 @@ class MultithreadedWordClient:
         os.makedirs("logs", exist_ok=True)
 
     def load_config(self):
+        config = {
+            "server_ip": "10.0.0.100",
+            "server_port": 5000,
+            "k": 5,
+            "p": 0,
+            "filename": "words.txt"
+        }
         try:
             with open('config.json', 'r') as f:
-                config = json.load(f)
-            if 'server_port' not in config and 'port' in config:
-                config['server_port'] = config['port']
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("//"):
+                        continue
+                    if '"server_ip"' in line:
+                        colon = line.find(":")
+                        quote1 = line.find('"', colon)
+                        quote2 = line.find('"', quote1 + 1)
+                        if quote1 != -1 and quote2 != -1:
+                            config["server_ip"] = line[quote1 + 1:quote2]
+                    elif '"server_port"' in line:
+                        colon = line.find(":")
+                        num = ''.join(c for c in line[colon+1:] if c.isdigit())
+                        if num:
+                            config["server_port"] = int(num)
+                    elif '"port"' in line:
+                        colon = line.find(":")
+                        num = ''.join(c for c in line[colon+1:] if c.isdigit())
+                        if num:
+                            config["server_port"] = int(num)
+                    elif '"k"' in line:
+                        colon = line.find(":")
+                        num = ''.join(c for c in line[colon+1:] if c.isdigit())
+                        if num:
+                            config["k"] = int(num)
+                    elif '"p"' in line:
+                        colon = line.find(":")
+                        num = ''.join(c for c in line[colon+1:] if c.isdigit())
+                        if num:
+                            config["p"] = int(num)
+                    elif '"filename"' in line:
+                        colon = line.find(":")
+                        quote1 = line.find('"', colon)
+                        quote2 = line.find('"', quote1 + 1)
+                        if quote1 != -1 and quote2 != -1:
+                            config["filename"] = line[quote1 + 1:quote2]
             return config
-        except:
-            return {"server_ip": "10.0.0.100", "port": 5000, "server_port": 5000, "k": 5}
+        except Exception:
+            return config
 
     def run_client(self):
-        """Run client with different strategies based on batch size"""
+       
         server_ip = self.config.get('server_ip', '10.0.0.100')
         server_port = self.config.get('server_port', 5000)
         k = self.config.get('k', 5)
@@ -49,14 +89,14 @@ class MultithreadedWordClient:
             end_time = time.time()
             completion_time = end_time - start_time
 
-            print(f"✅ Client {self.client_id} completed in {completion_time:.6f}s with {len(full_word_list)} words")
+            print(f"Client {self.client_id} completed in {completion_time:.6f}s with {len(full_word_list)} words")
 
             # Log completion time
             with open(f"logs/client_{self.client_id}_time.log", "w") as f:
                 f.write(f"{completion_time:.6f}\n")
 
         except Exception as e:
-            print(f"❌ Client {self.client_id} error: {e}")
+            print(f"Client {self.client_id} error: {e}")
             import traceback
             traceback.print_exc()
         finally:
@@ -66,8 +106,7 @@ class MultithreadedWordClient:
                 pass
 
     def run_normal_client(self, client_socket, k, word_list):
-        """Normal client: send one request at a time"""
-        print(f"📤 Normal client {self.client_id} using sequential requests")
+       
 
         offset = 0
         request_count = 0
@@ -88,20 +127,15 @@ class MultithreadedWordClient:
             offset += k
 
             # Progress logging
-            if request_count % 50 == 0:
-                print(f"   📊 Normal client {self.client_id}: {request_count} requests, {len(word_list)} words")
-
-        print(f"   ✅ Normal client {self.client_id}: {request_count} requests completed")
+            
 
     def run_greedy_client(self, client_socket, k, word_list):
-        """Greedy client: send ALL requests rapidly, then read all responses"""
-        print(f"🔥 GREEDY client {self.client_id} using batch_size={self.batch_size}")
+       
 
         # Estimate total requests needed (overestimate to ensure we get everything)
         total_words_estimate = 800  # Approximate total words in file
         max_requests = (total_words_estimate // k) + 10  # Add buffer
 
-        print(f"   🎯 Firing up to {max_requests} requests as fast as possible...")
 
         # Phase 1: FIRE ALL REQUESTS AS FAST AS POSSIBLE
         requests_sent = 0
@@ -123,10 +157,7 @@ class MultithreadedWordClient:
                 break
 
         send_time = time.time() - start_send_time
-        print(f"   ⚡ GREEDY: Sent {requests_sent} requests in {send_time:.3f}s ({requests_sent/send_time:.0f} req/s)")
-
-        # Phase 2: READ ALL RESPONSES
-        print(f"   📥 Reading responses...")
+       
 
         buffer = ""
         responses_received = 0
@@ -150,21 +181,19 @@ class MultithreadedWordClient:
                         # Progress logging
                         if responses_received % 100 == 0:
                             elapsed = time.time() - start_read_time
-                            print(f"      📊 Received {responses_received}/{requests_sent} responses in {elapsed:.2f}s")
+                           
 
                         if self.process_response(response, word_list):
-                            # EOF reached
-                            print(f"      🏁 EOF reached after {responses_received} responses")
                             return
 
             except:
                 break
 
         read_time = time.time() - start_read_time
-        print(f"   ✅ GREEDY: Read {responses_received} responses in {read_time:.3f}s")
+       
 
     def process_response(self, response, word_list):
-        """Process response and return True if EOF reached"""
+       
         if "EOF" in response:
             if response != "EOF":
                 words = response.replace(",EOF", "").split(',')

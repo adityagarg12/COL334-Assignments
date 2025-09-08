@@ -11,6 +11,8 @@
 
 using namespace std;
 
+bool quiet_mode = false;
+
 struct Config {
     string server_ip;
     int server_port;
@@ -68,36 +70,36 @@ void LoadWordsFromFile(const string& filename) {
     ifstream file(filename);
     string content;
     if (file.is_open()) {
-        getline(file, content); // Read entire line
+        getline(file, content); 
         file.close();
-        
-        // Split by comma
+    
         stringstream ss(content);
         string word;
         while (getline(ss, word, ',')) {
-            // Remove trailing '\r' if present
+           
             if (!word.empty() && word.back() == '\r') {
                 word.pop_back();
             }
             words.push_back(word);
         }
-       
-        
-        cout << "Loaded " << words.size() << " words from " << filename << endl;
+             
+       if(!quiet_mode) cout << "Loaded " << words.size() << " words from " << filename << endl;
     } else {
-        cerr << "Failed to open file: " << filename << endl;
+        cout << "Failed to open file: " << filename << endl;
     }
 }
 
 string ProcessRequest(const string& request, int& requestCount) {
     requestCount++;
-    cout << "\n--- Processing Request #" << requestCount << " ---" << endl;
-    cout << "Received request: " << request << endl;
-    
+
+    if(!quiet_mode){
+        cout << "\nProcessing Request #" << requestCount<< endl;
+        cout << "Received request: " << request << endl;
+    }
     // Parse request in format "p,k\n"
     size_t commaPos = request.find(',');
     if (commaPos == string::npos) {
-        cout << "ERROR: Invalid request format" << endl;
+        cout << "Invalid request format" << endl;
         return "Invalid request format\n";
     }
     
@@ -105,30 +107,26 @@ string ProcessRequest(const string& request, int& requestCount) {
         int p = stoi(request.substr(0, commaPos)); // offset
         string secondPart = request.substr(commaPos + 1);
         
-        // Remove newline character if present
+      
         if (secondPart.back() == '\n') {
             secondPart.pop_back();
         }
         
         int k = stoi(secondPart); // number of words
-        cout << "Parsed request: offset=" << p << ", count=" << k << endl;
-        cout << "File contains " << words.size() << " total words" << endl;
+
+        if(!quiet_mode) cout << "Parsed request: offset=" << p << ", count=" << k << endl;
         
         string response;
         
         // Check if offset is beyond file
         if (p >= (int)words.size()) {
-            cout << "Offset " << p << " is beyond file size (" << words.size() << ") - sending EOF" << endl;
+            if(!quiet_mode) cout << "Offset " << p << " is beyond file size (" << words.size() << ") - sending EOF" << endl;
             response = "EOF\n";
         } else {
             // Get k words starting from offset p
             int wordsToSend = min(k, (int)words.size() - p);
             bool reachedEOF = (p + k > (int)words.size());
             
-            cout << "Sending " << wordsToSend << " words starting from offset " << p;
-            if (reachedEOF) {
-                cout << " (EOF will be reached)";
-            }
             cout << endl;
             
             for (int i = 0; i < wordsToSend; i++) {
@@ -138,13 +136,12 @@ string ProcessRequest(const string& request, int& requestCount) {
             
             if (reachedEOF) {
                 response += ",EOF";
-                cout << "Added EOF marker to response" << endl;
             }
             
             response += "\n";
         }
-        
-        cout << "Sending response: " << response;
+
+        if(!quiet_mode) cout << "Sending response: " << response;
         return response;
         
     } catch (const exception& e) {
@@ -162,13 +159,23 @@ int main(int argc, char* argv[]) {
             break;
         }
     }
-    
+
+    for (int i = 1; i < argc; ++i) {
+        if (string(argv[i]) == "--quiet") {
+            quiet_mode = true;
+            break;
+        }
+    }
+
     Config config = LoadConfig(configFile);
-    cout << "Server Configuration:" << endl;
-    cout << "IP: " << config.server_ip << endl;
-    cout << "Port: " << config.server_port << endl;
-    cout << "Filename: " << config.filename << endl << endl;
-    
+
+    if(!quiet_mode) {
+        cout << "Server Configuration:" << endl;
+        cout << "IP: " << config.server_ip << endl;
+        cout << "Port: " << config.server_port << endl;
+        cout << "Filename: " << config.filename << endl << endl;
+    }
+
     // Load words from file
     LoadWordsFromFile(config.filename);
     
@@ -223,8 +230,7 @@ int main(int argc, char* argv[]) {
     }
     
     cout << "Server listening on " << config.server_ip << ":" << config.server_port << endl;
-    cout << "Waiting for client connection..." << endl;
-    
+   
     // Accept single client connection
     socklen_t nLen = sizeof(struct sockaddr);
     int clientSocket = accept(sockfd, NULL, &nLen);
@@ -235,7 +241,7 @@ int main(int argc, char* argv[]) {
     }
     
     cout << "Client connected successfully on socket: " << clientSocket << endl;
-    cout << "Ready to handle multiple requests until client disconnects..." << endl;
+   
     
     // Handle client requests in a loop
     char buffer[256];
@@ -247,7 +253,6 @@ int main(int argc, char* argv[]) {
         
         if (bytesReceived <= 0) {
             cout << "\nClient disconnected or error occurred" << endl;
-            cout << "Total requests processed: " << requestCount << endl;
             break;
         }
         
@@ -260,17 +265,10 @@ int main(int argc, char* argv[]) {
         // Send response back to client
         int bytesSent = send(clientSocket, response.c_str(), response.length(), 0);
         if (bytesSent < 0) {
-            cout << "ERROR: Failed to send response to client" << endl;
+            cout << "Failed to send response to client" << endl;
             break;
         }
-        
-        cout << "Response sent successfully (" << bytesSent << " bytes)" << endl;
-        cout << "==================================================" << endl;
-        
-        // Check if we sent EOF - client should disconnect soon
-        if (response == "EOF\n" || response.find(",EOF") != string::npos) {
-            cout << "EOF sent to client - expecting disconnection" << endl;
-        }
+
     }
     
     // Cleanup

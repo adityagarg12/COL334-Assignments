@@ -11,7 +11,7 @@ class Config:
 
 class WordServer:
     def __init__(self, config_file: str = "config.json"):
-        """Initialize the server with configuration."""
+      
         self.config = self.load_config(config_file)
         self.words = []
         self.load_words_from_file()
@@ -20,7 +20,7 @@ class WordServer:
         self.max_clients = 32
         
     def load_config(self, config_file: str) -> Config:
-        """Load configuration from JSON file using custom parser."""
+       
         config = Config()
         
         try:
@@ -77,7 +77,7 @@ class WordServer:
             sys.exit(1)
     
     def load_words_from_file(self):
-        """Load words from the specified file."""
+       
         try:
             with open(self.config.filename, 'r') as f:
                 content = f.read().strip()
@@ -88,7 +88,7 @@ class WordServer:
             sys.exit(1)
     
     def process_request(self, request: str) -> str:
-        """Process a client request and return the response."""
+       
         print(f"Received request: {request.strip()}")
         
         try:
@@ -128,7 +128,7 @@ class WordServer:
             return "Invalid request format\n"
     
     def handle_new_connection(self):
-        """Handle new client connection."""
+       
         try:
             client_socket, client_address = self.server_socket.accept()
             client_socket.setblocking(False)  # Set client socket to non-blocking
@@ -147,7 +147,7 @@ class WordServer:
             print(f"Error accepting new connection: {e}")
     
     def handle_client_message(self, client_socket):
-        """Handle message from existing client."""
+     
         try:
             data = client_socket.recv(1024)
             if not data:
@@ -174,7 +174,7 @@ class WordServer:
             self.remove_client(client_socket)
     
     def remove_client(self, client_socket):
-        """Remove client from the list and close socket."""
+        
         if client_socket in self.client_sockets:
             self.client_sockets.remove(client_socket)
             print(f"Removed client (Remaining clients: {len(self.client_sockets)})")
@@ -184,7 +184,7 @@ class WordServer:
             pass
     
     def start_server(self):
-        """Start the server using select() for I/O multiplexing."""
+        
         try:
             # Create and configure server socket
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -206,7 +206,7 @@ class WordServer:
             # Listen for connections
             self.server_socket.listen(self.max_clients)
             print(f"Server listening on {self.config.server_ip}:{self.config.server_port}")
-            print("Waiting for client connections...")
+          
             
             # Main event loop using select()
             while True:
@@ -222,9 +222,6 @@ class WordServer:
                     )
                     
                     if ready_to_read or in_error:
-                        print("Data is available now!")
-                        
-                        # Process events sequentially (FIRST-COME-FIRST-SERVE)
                         
                         # 1. Check for new connections first
                         if self.server_socket in ready_to_read:
@@ -256,7 +253,7 @@ class WordServer:
             self.cleanup()
     
     def cleanup(self):
-        """Clean up server resources."""
+     
         print("Cleaning up server resources...")
         
         # Close all client connections

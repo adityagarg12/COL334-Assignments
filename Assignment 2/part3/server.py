@@ -15,23 +15,61 @@ class MultithreadedWordServer:
         self.client_lock = threading.Lock()  # For thread-safe client counting
 
     def load_config(self, config_file: str) -> dict:
+        config = {
+            "server_ip": "10.0.0.100",
+            "server_port": 5000
+        }
         try:
             with open(config_file, 'r') as f:
-                config = json.load(f)
-            if 'server_port' not in config and 'port' in config:
-                config['server_port'] = config['port']
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("//"):
+                        continue
+                    if '"server_ip"' in line:
+                        colon = line.find(":")
+                        quote1 = line.find('"', colon)
+                        quote2 = line.find('"', quote1 + 1)
+                        if quote1 != -1 and quote2 != -1:
+                            config["server_ip"] = line[quote1 + 1:quote2]
+                    elif '"server_port"' in line:
+                        colon = line.find(":")
+                        num = ''.join(c for c in line[colon+1:] if c.isdigit())
+                        if num:
+                            config["server_port"] = int(num)
+                    elif '"port"' in line:
+                        colon = line.find(":")
+                        num = ''.join(c for c in line[colon+1:] if c.isdigit())
+                        if num:
+                            config["server_port"] = int(num)
+                    elif '"k"' in line:
+                        colon = line.find(":")
+                        num = ''.join(c for c in line[colon+1:] if c.isdigit())
+                        if num:
+                            config["k"] = int(num)
+                    elif '"p"' in line:
+                        colon = line.find(":")
+                        num = ''.join(c for c in line[colon+1:] if c.isdigit())
+                        if num:
+                            config["p"] = int(num)
+                    elif '"filename"' in line:
+                        colon = line.find(":")
+                        quote1 = line.find('"', colon)
+                        quote2 = line.find('"', quote1 + 1)
+                        if quote1 != -1 and quote2 != -1:
+                            config["filename"] = line[quote1 + 1:quote2]
             return config
         except:
-            return {"server_ip": "10.0.0.100", "port": 5000, "server_port": 5000}
+            return config
 
     def load_words_from_file(self):
-        with open("words.txt", 'r') as f:
+        filename = self.config.get("filename", "words.txt")
+        with open(filename, 'r') as f:
             content = f.read().strip()
             self.words = [word.strip() for word in content.split(',') if word.strip()]
-        print(f"Multithreaded server loaded {len(self.words)} words")
+        print(f"server loaded {len(self.words)} words from {filename}")
 
     def process_request(self, request: str) -> str:
-        """Process a single request and return response"""
+       
         try:
             parts = request.strip().split(',')
             if len(parts) != 2:
@@ -59,13 +97,9 @@ class MultithreadedWordServer:
             return "Invalid request\n"
 
     def handle_client_thread(self, client_socket, client_address, client_id):
-        """
-        Handle one client COMPLETELY in this thread.
-        This creates TRUE FCFS behavior - each client is processed sequentially.
-        Greedy clients will monopolize their thread longer!
-        """
+       
         thread_name = threading.current_thread().name
-        print(f"[{thread_name}] 🔗 Client {client_id} ({client_address}) started")
+      
 
         try:
             buffer = ""
@@ -110,15 +144,15 @@ class MultithreadedWordServer:
             print(f"[{thread_name}] ✅ Client {client_id} completed: {requests_processed} requests in {total_time:.3f}s")
 
         except Exception as e:
-            print(f"[{thread_name}] ❌ Error handling client {client_id}: {e}")
+            print(f"[{thread_name}]Error handling client {client_id}: {e}")
         finally:
             client_socket.close()
             with self.client_lock:
                 self.client_count -= 1
-            print(f"[{thread_name}] 🔌 Client {client_id} disconnected (Active: {self.client_count})")
+            print(f"[{thread_name}]Client {client_id} disconnected (Active: {self.client_count})")
 
     def start_server(self):
-        """Start the multithreaded FCFS server"""
+       
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
@@ -128,11 +162,7 @@ class MultithreadedWordServer:
         self.server_socket.bind((server_ip, server_port))
         self.server_socket.listen(50)
 
-        print(f"🚀 Multithreaded FCFS server listening on {server_ip}:{server_port}")
-        print("🎯 Each client gets a dedicated thread - TRUE FCFS order!")
-        print("🔥 Greedy clients will monopolize their thread longer!")
-        print("=" * 70)
-
+       
         try:
             client_counter = 0
             while True:
@@ -144,7 +174,7 @@ class MultithreadedWordServer:
                     client_counter += 1
                     client_id = f"C{client_counter}"
 
-                print(f"\n🔗 New client {client_id} from {address} (Active: {self.client_count})")
+                print(f"\nNew client {client_id} from {address} (Active: {self.client_count})")
 
                 # Create dedicated thread for this client
                 # Thread name indicates FCFS order
@@ -158,11 +188,11 @@ class MultithreadedWordServer:
                 client_thread.start()
 
         except KeyboardInterrupt:
-            print("\n🛑 Server shutting down...")
+            print("\nServer shutting down...")
         finally:
             if self.server_socket:
                 self.server_socket.close()
-            print("✅ Server shutdown complete")
+            print("Server shutdown complete")
 
 if __name__ == "__main__":
     server = MultithreadedWordServer()
