@@ -203,7 +203,7 @@ class WordClient:
         word_frequencies = self.connect_and_request_continuously()
         end_time = time.time()
         
-        # Display results
+        
         self.display_word_frequencies(word_frequencies)
         
         completion_time = end_time - start_time

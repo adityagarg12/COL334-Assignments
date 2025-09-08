@@ -16,7 +16,7 @@ class WordServer:
         self.words = []
         self.load_words_from_file()
         self.server_socket = None
-        self.client_sockets = []  # List to track connected clients (max 32)
+        self.client_sockets = []
         self.max_clients = 32
         
     def load_config(self, config_file: str) -> Config:
@@ -28,7 +28,6 @@ class WordServer:
                 lines = f.readlines()
             
             for line in lines:
-                # Remove spaces and tabs
                 line = line.strip()
                 if not line:
                     continue
@@ -131,7 +130,7 @@ class WordServer:
        
         try:
             client_socket, client_address = self.server_socket.accept()
-            client_socket.setblocking(False)  # Set client socket to non-blocking
+            client_socket.setblocking(False)  
             
             # Check if we can accept more clients
             if len(self.client_sockets) >= self.max_clients:
@@ -213,7 +212,7 @@ class WordServer:
                 try:
                     # Prepare socket lists for select()
                     read_sockets = [self.server_socket] + self.client_sockets
-                    write_sockets = []  # Not needed for this application
+                    write_sockets = []  
                     error_sockets = [self.server_socket] + self.client_sockets
                     
                     # Use select() with timeout
@@ -238,7 +237,6 @@ class WordServer:
                                 print(f"Error condition on client socket")
                                 self.remove_client(client_socket)
                     else:
-                        # Timeout - no activity
                         print("Timeout occurred! No data after 1 second.")
                     
                 except KeyboardInterrupt:
@@ -256,11 +254,11 @@ class WordServer:
      
         print("Cleaning up server resources...")
         
-        # Close all client connections
-        for client_socket in self.client_sockets[:]:  # Copy list to avoid modification during iteration
+        
+        for client_socket in self.client_sockets[:]:  
             self.remove_client(client_socket)
         
-        # Close server socket
+        
         if self.server_socket:
             self.server_socket.close()
         
