@@ -2,13 +2,17 @@
 import json, os, time, pathlib
 from topo_wordcount import make_net
 
-K = int(os.environ.get("K", "5"))
-P = int(os.environ.get("P", "0"))
+K_env = os.environ.get("K")
+P_env = os.environ.get("P")
 
-# load base config and override p
+# load base config
 cfg = json.loads(pathlib.Path("config.json").read_text())
-cfg["p"] = P
-cfg["k"] = K
+
+if P_env is not None and P_env != "":
+    cfg["p"] = int(P_env)
+if K_env is not None and K_env != "":
+    cfg["k"] = int(K_env)
+
 with open("config.json", "w") as f:
     json.dump(cfg, f, indent=2)
 

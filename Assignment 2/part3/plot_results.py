@@ -3,13 +3,12 @@ import csv
 import sys
 import os
 
-# Default CSV and output plot file names
 default_csv = 'part3_results.csv'
 default_plot = 'p3_plot.png'
 
 def plot_results(csv_file=default_csv, plot_file=default_plot):
    
-    # Check if the CSV file exists
+
     if not os.path.exists(csv_file):
         print(f"Error: CSV file not found at '{csv_file}'")
         return
@@ -21,13 +20,12 @@ def plot_results(csv_file=default_csv, plot_file=default_plot):
         with open(csv_file, mode='r', newline='') as infile:
             reader = csv.reader(infile)
             
-            # Read the header row to identify column indices
+          
             header = next(reader)
             
             c_col_index = -1
             jfi_col_index = -1
             
-            # Find the index for 'c' and 'JFI' columns, case-insensitively
             for i, col_name in enumerate(header):
                 if col_name.lower() == 'c_value':
                     c_col_index = i
@@ -39,9 +37,8 @@ def plot_results(csv_file=default_csv, plot_file=default_plot):
                 print(f"Found columns: {header}")
                 return
 
-            # Read the data rows
             for row in reader:
-                if row: # Skip empty rows
+                if row: 
                     c_values.append(int(row[c_col_index]))
                     jfi_values.append(float(row[jfi_col_index]))
 
@@ -56,7 +53,6 @@ def plot_results(csv_file=default_csv, plot_file=default_plot):
         print("CSV file is empty or contains no data rows.")
         return
 
-    # --- Plotting Section ---
     plt.figure(figsize=(8, 5))
     plt.plot(c_values, jfi_values, marker='o', linestyle='-')
     
@@ -65,7 +61,6 @@ def plot_results(csv_file=default_csv, plot_file=default_plot):
     plt.title("JFI vs c")
     plt.grid(True)
     
-    # Set x-ticks to correspond to the actual c values
     plt.xticks(c_values)
     plt.ylim(0, 1.1)
     
@@ -74,7 +69,6 @@ def plot_results(csv_file=default_csv, plot_file=default_plot):
    
     output_plot = 'p3_plot.png'
     
-    # Ensure the output directory exists if specified in the path
     output_dir = os.path.dirname(output_plot)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)

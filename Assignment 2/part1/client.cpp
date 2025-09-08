@@ -23,7 +23,7 @@ struct Config {
     string filename;
 };
 
-// Simple JSON parser for client config
+// config file se info extract
 Config LoadConfig(const string& configFile) {
     Config config;
     ifstream file(configFile);
@@ -34,7 +34,7 @@ Config LoadConfig(const string& configFile) {
     
     string line;
     while (getline(file, line)) {
-        // Remove spaces and special characters
+       
         size_t start = line.find_first_not_of(" \t");
         if (start == string::npos) continue;
         line = line.substr(start);
@@ -90,7 +90,7 @@ vector<string> ParseResponse(const string& response) {
     string word;
     while (getline(ss, word, ',')) {
         if (!word.empty() && word != "EOF" && word != "EOF\n" && word != "EOF\r" && word != "\n" && word != "\r") {
-            // Remove newline if present
+            
             if (word.back() == '\n' || word.back() == '\r') {
                 word.pop_back();
             }
@@ -101,6 +101,7 @@ vector<string> ParseResponse(const string& response) {
     return words;
 }
 
+// frequency print
 void DisplayWordFrequencies(const map<string, int>& wordFrequency) {
     cout << "\nFinal Word Frequencies" << endl;
     if (wordFrequency.empty()) {
@@ -113,7 +114,7 @@ void DisplayWordFrequencies(const map<string, int>& wordFrequency) {
 }
 
 int main(int argc, char* argv[]) {
-    // Load configuration
+
     string configFile = "config.json";
     for (int i = 1; i < argc - 1; ++i) {
         if (string(argv[i]) == "--config") {
@@ -122,6 +123,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    //to not print debug statements
     for (int i = 1; i < argc; ++i) {
         if (string(argv[i]) == "--quiet") {
             quiet_mode = true;
@@ -153,7 +155,7 @@ int main(int argc, char* argv[]) {
     srv.sin_port = htons(config.server_port);
     memset(&(srv.sin_zero), 0, 8);
     
-    // Connect to server
+    
     int nRet = connect(nClientSocket, (struct sockaddr*)&srv, sizeof(srv));
     if (nRet < 0) {
         cerr << "Connection to server failed" << endl;
@@ -163,21 +165,21 @@ int main(int argc, char* argv[]) {
     
     cout << "Connected to server successfully!" << endl;
     
-    // Start time
+    
     auto start_time = std::chrono::high_resolution_clock::now();
     
-    // Initialize variables for multiple requests
+   
     int current_offset = config.p;
     int request_count = 0;
     bool eof_reached = false;
     map<string, int> totalWordFrequency;
     int total_words_received = 0;
         
-    // Loop until EOF is reached
+    
     while (!eof_reached) {
         request_count++;
         
-        // Send request in format "p,k\n"
+        // request format -> format "p,k\n"
         string request = to_string(current_offset) + "," + to_string(config.k) + "\n";
 
         if (!quiet_mode) {
@@ -192,7 +194,7 @@ int main(int argc, char* argv[]) {
             break;
         }
         
-        // Receive response
+       
         char buffer[1024] = {0};
         int bytesReceived = recv(nClientSocket, buffer, sizeof(buffer) - 1, 0);
         if (bytesReceived <= 0) {
@@ -207,7 +209,7 @@ int main(int argc, char* argv[]) {
             cout << "Received response: " << response;
         }
 
-        // Check for EOF cases
+      
         if (response == "EOF\n") {
             
             if(!quiet_mode){
@@ -221,20 +223,21 @@ int main(int argc, char* argv[]) {
             }
             eof_reached = true;
             
-            // Process words before EOF
+            
             vector<string> words = ParseResponse(response);
 
+             //frequency update for words
             for (const string& word : words) {
 
                 if(!quiet_mode) cout << word << " ";
-
+               
                 totalWordFrequency[word]++;
                 total_words_received++;
             }
             cout << endl;
         } 
         else {
-            // Normal response - parse all words
+
             vector<string> words = ParseResponse(response);
             
             for (const string& word : words) {
@@ -247,27 +250,26 @@ int main(int argc, char* argv[]) {
                 cout << endl;
             }
 
-            // Update offset for next request
+           
             current_offset += words.size();
         }
         
     }
     
-    // End time
+   
     auto end_time = std::chrono::high_resolution_clock::now();
     
     std::chrono::duration<double, std::milli> elapsed = end_time - start_time;
     
-    // Display final results
     
     if(!quiet_mode) cout << "Total words received: " << total_words_received << endl;
     
-    // Display word frequencies
+  
     DisplayWordFrequencies(totalWordFrequency);
     
     cout << "ELAPSED_MS:" << elapsed.count() << endl;
     
-    // Close connection
+   
     close(nClientSocket);
     cout << "\nConnection closed." << endl;
     

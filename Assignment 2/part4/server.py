@@ -17,7 +17,7 @@ class RoundRobinServer:
        
         self.clients = {}
         self.clients_lock = threading.Lock()
-        self.client_order = []  # order for round-robin (list of client_ids)
+        self.client_order = []  
         self.next_index = 0
 
         
@@ -125,7 +125,6 @@ class RoundRobinServer:
         except Exception as e:
             print(f"[{thread_name}] Read error {client_id}: {e}")
         finally:
-            # mark client dead; processor will clean socket
             with self.clients_lock:
                 entry = self.clients.get(client_id)
                 if entry:
@@ -140,15 +139,13 @@ class RoundRobinServer:
         while True:
             with self.clients_lock:
                 alive_clients = [cid for cid in self.client_order if cid in self.clients and self.clients[cid]['alive'] or (cid in self.clients and len(self.clients[cid]['queue'])>0)]
-                # reorder client_order: remove dead ones
+
                 if set(alive_clients) != set(self.client_order):
                     self.client_order = [c for c in self.client_order if c in alive_clients]
 
                 if not self.client_order:
-                    # no clients currently: sleep and continue
                     pass
 
-                # pick next client index safely
                 if self.client_order:
                     if self.next_index >= len(self.client_order):
                         self.next_index = 0
@@ -160,7 +157,6 @@ class RoundRobinServer:
                 time.sleep(0.01)
                 continue
 
-            # serve at most one request for this client
             served = False
             with self.clients_lock:
                 entry = self.clients.get(client_id)
@@ -173,7 +169,6 @@ class RoundRobinServer:
                     sock = None
 
             if served and request is not None:
-                # optional small delay to exaggerate scheduling
                 if self.processing_delay:
                     time.sleep(self.processing_delay)
 
@@ -186,7 +181,6 @@ class RoundRobinServer:
                         pass
 
                     if "EOF" in response:
-                        # close and cleanup this client
                         with self.clients_lock:
                             entry = self.clients.get(client_id)
                             if entry:
@@ -196,24 +190,21 @@ class RoundRobinServer:
                                 except:
                                     pass
                                 entry['alive'] = False
-                                # we will remove from client_order on next loop
+
                 except Exception as e:
                     print(f"[{thread_name}] Error processing {client_id}: {e}")
 
-                # advance rr pointer to next client
                 with self.clients_lock:
                     self.next_index += 1
                     if self.next_index >= max(1, len(self.client_order)):
                         self.next_index = 0
                 continue
 
-            # if we didn't serve (no queued request for this client), advance pointer
             with self.clients_lock:
                 self.next_index += 1
                 if self.next_index >= max(1, len(self.client_order)):
                     self.next_index = 0
 
-            # if nobody had anything, sleep a bit to avoid busy-spin
             time.sleep(0.001)
 
     def start_server(self):

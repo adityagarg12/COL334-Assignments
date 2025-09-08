@@ -21,12 +21,10 @@ clean:
 	rm -f $(TARGET_SERVER) $(TARGET_CLIENT)
 
 run:
-	K=$(K) P=$(P) python3 demo_runner.py
-
-run_experiments:
-	sudo python3 run_experiments.py
+	K=$(K) P=$(P) sudo python3 demo_runner.py
 
 plot:
+	sudo python3 run_experiments.py
 	python3 plot_results.py
 
 .PHONY: all clean run-server run-client

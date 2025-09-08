@@ -21,9 +21,9 @@ struct Config {
     string filename;
 };
 
-vector<string> words; // Store all words from file
+vector<string> words; 
 
-// Simple JSON parser for server config
+
 Config LoadConfig(const string& configFile) {
     Config config;
     ifstream file(configFile);
@@ -34,7 +34,7 @@ Config LoadConfig(const string& configFile) {
     
     string line;
     while (getline(file, line)) {
-        // Remove spaces and special characters
+      
         size_t start = line.find_first_not_of(" \t");
         if (start == string::npos) continue;
         line = line.substr(start);
@@ -96,7 +96,7 @@ string ProcessRequest(const string& request, int& requestCount) {
         cout << "\nProcessing Request #" << requestCount<< endl;
         cout << "Received request: " << request << endl;
     }
-    // Parse request in format "p,k\n"
+    
     size_t commaPos = request.find(',');
     if (commaPos == string::npos) {
         cout << "Invalid request format" << endl;
@@ -104,7 +104,7 @@ string ProcessRequest(const string& request, int& requestCount) {
     }
     
     try {
-        int p = stoi(request.substr(0, commaPos)); // offset
+        int p = stoi(request.substr(0, commaPos));
         string secondPart = request.substr(commaPos + 1);
         
       
@@ -112,18 +112,18 @@ string ProcessRequest(const string& request, int& requestCount) {
             secondPart.pop_back();
         }
         
-        int k = stoi(secondPart); // number of words
+        int k = stoi(secondPart); 
 
         if(!quiet_mode) cout << "Parsed request: offset=" << p << ", count=" << k << endl;
         
         string response;
         
-        // Check if offset is beyond file
+        
         if (p >= (int)words.size()) {
             if(!quiet_mode) cout << "Offset " << p << " is beyond file size (" << words.size() << ") - sending EOF" << endl;
             response = "EOF\n";
         } else {
-            // Get k words starting from offset p
+          
             int wordsToSend = min(k, (int)words.size() - p);
             bool reachedEOF = (p + k > (int)words.size());
             
@@ -151,7 +151,7 @@ string ProcessRequest(const string& request, int& requestCount) {
 }
 
 int main(int argc, char* argv[]) {
-    // Determine config file name
+   
     string configFile = "config.json";
     for (int i = 1; i < argc - 1; ++i) {
         if (string(argv[i]) == "--config") {
@@ -176,10 +176,10 @@ int main(int argc, char* argv[]) {
         cout << "Filename: " << config.filename << endl << endl;
     }
 
-    // Load words from file
+   
     LoadWordsFromFile(config.filename);
     
-    // Create socket
+  
     int sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sockfd < 0) {
         cerr << "Socket creation failed" << endl;
@@ -188,7 +188,7 @@ int main(int argc, char* argv[]) {
     
     cout << "Socket created successfully " << sockfd << endl;
     
-    // Set SO_REUSEADDR
+    
     int nOptVal = 1;
     int nOptLen = sizeof(nOptVal);
     int nRet = setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (const char*)&nOptVal, nOptLen);
@@ -200,7 +200,7 @@ int main(int argc, char* argv[]) {
     
     cout << "setsockopt(SO_REUSEADDR) successful" << endl;
     
-    // Setup server address
+  
     struct sockaddr_in srv;
     srv.sin_family = AF_INET;
     if (config.server_ip == "INADDR_ANY" || config.server_ip.empty()) {
@@ -211,7 +211,7 @@ int main(int argc, char* argv[]) {
     srv.sin_port = htons(config.server_port);
     memset(&(srv.sin_zero), 0, 8);
     
-    // Bind socket
+    
     nRet = bind(sockfd, (sockaddr*)&srv, sizeof(sockaddr));
     if (nRet < 0) {
         cerr << "Socket bind failed" << endl;
@@ -221,8 +221,8 @@ int main(int argc, char* argv[]) {
     
     cout << "Socket bind successful" << endl;
     
-    // Listen for connections
-    nRet = listen(sockfd, 1); // Only 1 client
+   
+    nRet = listen(sockfd, 1); 
     if (nRet < 0) {
         cerr << "Listen failed" << endl;
         close(sockfd);
@@ -231,7 +231,7 @@ int main(int argc, char* argv[]) {
     
     cout << "Server listening on " << config.server_ip << ":" << config.server_port << endl;
    
-    // Accept single client connection
+  
     socklen_t nLen = sizeof(struct sockaddr);
     int clientSocket = accept(sockfd, NULL, &nLen);
     if (clientSocket < 0) {
@@ -243,7 +243,7 @@ int main(int argc, char* argv[]) {
     cout << "Client connected successfully on socket: " << clientSocket << endl;
    
     
-    // Handle client requests in a loop
+  
     char buffer[256];
     int requestCount = 0;
     
@@ -259,10 +259,10 @@ int main(int argc, char* argv[]) {
         buffer[bytesReceived] = '\0';
         string request(buffer);
         
-        // Process the request and get response
+       
         string response = ProcessRequest(request, requestCount);
         
-        // Send response back to client
+        
         int bytesSent = send(clientSocket, response.c_str(), response.length(), 0);
         if (bytesSent < 0) {
             cout << "Failed to send response to client" << endl;
@@ -271,7 +271,7 @@ int main(int argc, char* argv[]) {
 
     }
     
-    // Cleanup
+ 
     close(clientSocket);
     close(sockfd);
     cout << "Server shutting down..." << endl;

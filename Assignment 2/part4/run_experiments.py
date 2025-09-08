@@ -69,7 +69,6 @@ class Runner:
         
         results = {'greedy': [], 'normal': []}
 
-        # Look for log files
         log_files = glob.glob("logs/client_*_time.log")
 
         for log_file in log_files:
@@ -77,7 +76,6 @@ class Runner:
                 with open(log_file, 'r') as f:
                     completion_time = float(f.read().strip())
 
-                # Determine if this is rogue or normal client based on filename
                 filename = os.path.basename(log_file)
                 if 'greedy' in filename:
                     results['greedy'].append(completion_time)
@@ -97,8 +95,6 @@ class Runner:
 
         n = len(completion_times)
 
-        # Convert completion times to throughput (inverse)
-        # Add small epsilon to avoid division by zero
         throughputs = [1/(t + 1e-6) for t in completion_times]
 
         sum_throughputs = sum(throughputs)
@@ -114,36 +110,27 @@ class Runner:
        
         print(f"Running experiment with c={c_value}")
 
-        # Clean logs
         self.cleanup_logs()
 
-        # Create network using provided topology
         from topology import create_network
         net = create_network(num_clients=self.num_clients)
 
         try:
-            # Get hosts
+
             server = net.get('server')
             clients = [net.get(f'client{i+1}') for i in range(self.num_clients)]
-
-        
-           
-            
+     
             server_proc = server.popen("python3 server.py > logs/server.log 2>&1", shell=True)
-            time.sleep(3)  # Give server time to start
-
+            time.sleep(3)  
            
-
-            # Client 1 is greedy (batch size c)
             greedy_proc = clients[0].popen(f"python3 client.py --batch-size {c_value} --client-id greedy")
 
-            # Clients 2-N are normal (batch size 1)
             normal_procs = []
             for i in range(1, self.num_clients):
                 proc = clients[i].popen(f"python3 client.py --batch-size 1 --client-id normal_{i+1}")
                 normal_procs.append(proc)
 
-            # Wait for all clients
+          
             print("Waiting for clients to complete...")
             greedy_proc.wait()
             for proc in normal_procs:
@@ -151,13 +138,11 @@ class Runner:
 
             print("All clients completed")
 
-            # Stop server
             server_proc.terminate()
             server_proc.wait()
             time.sleep(2)
 
-            # Parse results
-            time.sleep(1)  # Give time for log files to be written
+            time.sleep(1)  
             results = self.parse_logs()
             return results
 
@@ -166,11 +151,9 @@ class Runner:
 
     def run_varying_c(self):
       
-        c_values = list(range(1, 11))  # c from 1 to 10 as per assignment
+        c_values = list(range(1, 11)) 
         all_results = {}
-        jfi_values = []
-
-        
+        jfi_values = []      
 
         for c in c_values:
            
@@ -183,9 +166,7 @@ class Runner:
             jfi = self.calculate_jfi(all_times)
             jfi_values.append(jfi)
 
-           
 
-        # Save results to CSV
         self.save_results_to_csv(c_values, jfi_values, all_results)
 
        
@@ -220,7 +201,6 @@ class Runner:
 def main():
     runner = Runner()
 
-    # Run experiments with varying c values
     c_values, jfi_values, all_results = runner.run_varying_c()
 
   

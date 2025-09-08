@@ -19,21 +19,21 @@ def modify_config(key, value, config_path="config.json"):
    
     with open(config_path, "r") as f:
         content = f.read()
-    # Save trailing newlines (if any)
+    
     trailing_newlines = ""
     match_trailing = re.search(r'(\n+)$', content)
     if match_trailing:
         trailing_newlines = match_trailing.group(1)
         content = content[: -len(trailing_newlines)]
 
-    # For compact format, ignore any trailing newlines after the closing brace
+    
     compact_match = re.match(r'\s*{.*}\s*$', content)
     if compact_match and "\n" not in content.strip():
        
         pattern = rf'("{key}"\s*:\s*)([^,}}]+)'
         new_content, count = re.subn(pattern, rf'\1{value}', content)
         if count == 0:
-            # Key not found, insert before last }
+         
             new_content = re.sub(r'(})$', rf', "{key}": {value}\1', content)
         content = new_content
     else:

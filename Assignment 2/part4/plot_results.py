@@ -31,7 +31,7 @@ def plot_part4_results(csv_file='part4_results.csv', plot_file='p4_plot.png'):
     plt.xticks(c_values)
     plt.ylim(0, 1.1)
     
-    # Add a line for perfect fairness for context
+   
     plt.axhline(y=1.0, color='r', linestyle=':', linewidth=1.5, label='Perfect Fairness')
     
     plt.legend()

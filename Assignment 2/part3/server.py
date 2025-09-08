@@ -1,6 +1,6 @@
 import socket
 import threading
-import json
+# import json
 import time
 import os
 import sys
@@ -12,7 +12,7 @@ class MultithreadedWordServer:
         self.load_words_from_file()
         self.server_socket = None
         self.client_count = 0
-        self.client_lock = threading.Lock()  # For thread-safe client counting
+        self.client_lock = threading.Lock()  
 
     def load_config(self, config_file: str) -> dict:
         config = {
@@ -75,9 +75,8 @@ class MultithreadedWordServer:
             if len(parts) != 2:
                 return "Invalid request\n"
 
-            p = int(parts[0])  # offset
-            k = int(parts[1])  # number of words
-
+            p = int(parts[0])
+            k = int(parts[1])  
             if p >= len(self.words):
                 return "EOF\n"
 
@@ -107,31 +106,25 @@ class MultithreadedWordServer:
             start_time = time.time()
 
             while True:
-                # Read data from client
+             
                 try:
                     data = client_socket.recv(4096).decode('utf-8')
                     if not data:
-                        break  # Client disconnected
+                        break 
                     buffer += data
                 except:
                     break
-
-                # Process ALL complete requests in buffer
+             
                 while '\n' in buffer:
                     request, buffer = buffer.split('\n', 1)
                     if request.strip():
                         requests_processed += 1
 
-                        # Process this request
+                       
                         response = self.process_request(request)
-                        client_socket.send(response.encode('utf-8'))
-
-                        # Log every 50 requests to show progress
-                        if requests_processed % 50 == 0:
-                            elapsed = time.time() - start_time
-                            print(f"[{thread_name}] ⚡ Client {client_id}: {requests_processed} requests in {elapsed:.2f}s")
-
-                        # Check if we sent EOF
+                        client_socket.send(response.encode('utf-8'))                  
+                        
+                                                
                         if "EOF" in response:
                             print(f"[{thread_name}] 🏁 Client {client_id}: EOF sent after {requests_processed} requests")
                             break
@@ -141,7 +134,6 @@ class MultithreadedWordServer:
 
             end_time = time.time()
             total_time = end_time - start_time
-            print(f"[{thread_name}] ✅ Client {client_id} completed: {requests_processed} requests in {total_time:.3f}s")
 
         except Exception as e:
             print(f"[{thread_name}]Error handling client {client_id}: {e}")
@@ -166,7 +158,7 @@ class MultithreadedWordServer:
         try:
             client_counter = 0
             while True:
-                # Accept connection (FCFS order)
+               
                 client_socket, address = self.server_socket.accept()
 
                 with self.client_lock:
@@ -176,15 +168,14 @@ class MultithreadedWordServer:
 
                 print(f"\nNew client {client_id} from {address} (Active: {self.client_count})")
 
-                # Create dedicated thread for this client
-                # Thread name indicates FCFS order
+               
                 thread_name = f"FCFS-Client-{client_counter}"
                 client_thread = threading.Thread(
                     target=self.handle_client_thread,
                     args=(client_socket, address, client_id),
                     name=thread_name
                 )
-                client_thread.daemon = True  # Dies when main thread dies
+                client_thread.daemon = True 
                 client_thread.start()
 
         except KeyboardInterrupt:

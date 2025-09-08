@@ -80,10 +80,9 @@ class MultithreadedWordClient:
             full_word_list = []
 
             if self.batch_size == 1:
-                # Normal client: sequential request-response
+               
                 self.run_normal_client(client_socket, k, full_word_list)
             else:
-                # Greedy client: fire all requests rapidly then read responses
                 self.run_greedy_client(client_socket, k, full_word_list)
 
             end_time = time.time()
@@ -91,7 +90,6 @@ class MultithreadedWordClient:
 
             print(f"Client {self.client_id} completed in {completion_time:.6f}s with {len(full_word_list)} words")
 
-            # Log completion time
             with open(f"logs/client_{self.client_id}_time.log", "w") as f:
                 f.write(f"{completion_time:.6f}\n")
 
@@ -115,21 +113,19 @@ class MultithreadedWordClient:
             request_count += 1
             request = f"{offset},{k}\n"
 
-            # Send request
             client_socket.send(request.encode('utf-8'))
 
-            # Read response immediately
             response_data = client_socket.recv(4096).decode('utf-8').strip()
 
             if self.process_response(response_data, word_list):
-                break  # EOF reached
+                break  
 
             offset += k
            
     def run_greedy_client(self, client_socket, k, word_list):
       
-        total_words_estimate = 800  # Approximate total words in file
-        max_requests = (total_words_estimate // k) + 10  # Add buffer
+        total_words_estimate = 800 
+        max_requests = (total_words_estimate // k) + 10  
 
       
         requests_sent = 0
@@ -143,9 +139,8 @@ class MultithreadedWordClient:
                 client_socket.send(request.encode('utf-8'))
                 requests_sent += 1
 
-                # Batch sending for greedy behavior
                 if requests_sent % self.batch_size == 0:
-                    time.sleep(0.001)  # Tiny delay between batches
+                    time.sleep(0.001) 
 
             except:
                 break
@@ -164,7 +159,6 @@ class MultithreadedWordClient:
                     break
                 buffer += data
 
-                # Process complete responses
                 while '\n' in buffer:
                     line, buffer = buffer.split('\n', 1)
                     response = line.strip()
@@ -172,7 +166,6 @@ class MultithreadedWordClient:
                     if response:
                         responses_received += 1
 
-                        # Progress logging
                         if responses_received % 100 == 0:
                             elapsed = time.time() - start_read_time
                            
@@ -194,7 +187,7 @@ class MultithreadedWordClient:
                 words = response.replace(",EOF", "").split(',')
                 valid_words = [w.strip() for w in words if w.strip()]
                 word_list.extend(valid_words)
-            return True  # EOF reached
+            return True  
         else:
             words = response.split(',')
             valid_words = [w.strip() for w in words if w.strip()]
