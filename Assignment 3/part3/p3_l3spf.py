@@ -30,13 +30,19 @@ class L3UnicastController(app_manager.RyuApp):
         self.host_info = {}
         self.ip_to_mac = {}
         self.port_info = {}
+
+        # Cache for installed paths to avoid re-computation
+        self.installed_paths = set()
+        
+        # Store original link costs for restoration when links come back up
+        self.original_link_costs = {}
         
         # Parse the config to build our view of the network
         self._parse_config()
         self.logger.info("Configuration loaded and parsed successfully.")
         
-        # Cache for installed paths to avoid re-computation
-        self.installed_paths = set()
+        # Build port-to-neighbor mapping for link failure detection
+        self._build_port_neighbor_mapping()
 
     def _load_config(self, file_path):
         """Loads the network configuration from a JSON file."""
@@ -46,10 +52,19 @@ class L3UnicastController(app_manager.RyuApp):
     def _parse_config(self):
         """Parses the loaded config to build internal network representations."""
         self.graph = {s['name']: {} for s in self.config['switches']}
+        
+        # Build the graph and store original costs
         for link in self.config['links']:
             src_node = link.get('src', link.get('ssc'))
-            self.graph[src_node][link['dst']] = link['cost']
-            self.graph[link['dst']][src_node] = link['cost']
+            dst_node = link['dst']
+            cost = link['cost']
+            
+            self.graph[src_node][dst_node] = cost
+            self.graph[dst_node][src_node] = cost
+            
+            # Store original costs for both directions
+            self.original_link_costs[(src_node, dst_node)] = cost
+            self.original_link_costs[(dst_node, src_node)] = cost
 
         for host in self.config['hosts']:
             self.host_info[host['ip']] = host
@@ -59,7 +74,7 @@ class L3UnicastController(app_manager.RyuApp):
             dpid = switch['dpid']
             self.switch_info[switch['name']] = switch
             self.port_info[dpid] = {}
-            interfaces = switch.get('interfaces', switch.get('intesfaces', []))
+            interfaces = switch.get('interfaces', switch.get('interfaces', []))
 
             for i, iface in enumerate(interfaces, 1):
                 port_no = i 
@@ -68,19 +83,37 @@ class L3UnicastController(app_manager.RyuApp):
 
         for switch in self.config['switches']:
             dpid = switch['dpid']
-            interfaces = switch.get('interfaces', switch.get('intesfaces', []))
+            interfaces = switch.get('interfaces', switch.get('interfaces', []))
             for i, iface in enumerate(interfaces, 1):
                 port_no = i
-                neighbor_name = iface.get('neighbor', iface.get('neighbos'))
+                neighbor_name = iface.get('neighbor', iface.get('neighbour'))
                 if neighbor_name and neighbor_name.startswith('s'):
                     neighbor_switch = self.switch_info[neighbor_name]
-                    neighbor_interfaces = neighbor_switch.get('interfaces', neighbor_switch.get('intesfaces', []))
+                    neighbor_interfaces = neighbor_switch.get('interfaces', neighbor_switch.get('interfaces', []))
                     for n_iface in neighbor_interfaces:
-                        n_neighbor = n_iface.get('neighbor', n_iface.get('neighbos'))
+                        n_neighbor = n_iface.get('neighbor', n_iface.get('neighbor'))
                         if n_neighbor == switch['name']:
                             self.port_info[dpid][port_no]['neighbor_mac'] = n_iface['mac']
                             break
 
+    def _build_port_neighbor_mapping(self):
+        """Builds a mapping from (dpid, port_no) to neighbor switch name for link failure detection."""
+        self.port_to_neighbor = {}
+        
+        for switch in self.config['switches']:
+            dpid = switch['dpid']
+            switch_name = switch['name']
+            interfaces = switch.get('interfaces', switch.get('interfaces', []))
+            
+            for i, iface in enumerate(interfaces, 1):
+                port_no = i
+                neighbor_name = iface.get('neighbor', iface.get('neighbour'))
+                
+                # Only map switch-to-switch connections
+                if neighbor_name and neighbor_name.startswith('s'):
+                    self.port_to_neighbor[(dpid, port_no)] = neighbor_name
+        
+        self.logger.info(f"Built port-to-neighbor mapping with {len(self.port_to_neighbor)} entries.")
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -88,20 +121,30 @@ class L3UnicastController(app_manager.RyuApp):
         datapath = ev.msg.datapath
         self.datapaths[datapath.id] = datapath
         self.logger.info(f"Switch dpid={datapath.id} connected.")
-
-        # Rule #1: Send unmatched packets to controller (lowest priority)
         self.add_flow(datapath, 0, datapath.ofproto_parser.OFPMatch(), 
                       [datapath.ofproto_parser.OFPActionOutput(datapath.ofproto.OFPP_CONTROLLER, 
                                                                datapath.ofproto.OFPCML_NO_BUFFER)])
-        # Rule #2: Send ARP packets to controller (higher priority)
-        self.add_flow(datapath, 10, datapath.ofproto_parser.OFPMatch(eth_type=ether_types.ETH_TYPE_ARP),
-                      [datapath.ofproto_parser.OFPActionOutput(datapath.ofproto.OFPP_CONTROLLER,
-                                                               datapath.ofproto.OFPCML_NO_BUFFER)])
-
+        
     def add_flow(self, datapath, priority, match, actions):
         """Helper to add a flow entry to a switch."""
         inst = [datapath.ofproto_parser.OFPInstructionActions(datapath.ofproto.OFPIT_APPLY_ACTIONS, actions)]
         mod = datapath.ofproto_parser.OFPFlowMod(datapath=datapath, priority=priority, match=match, instructions=inst)
+        datapath.send_msg(mod)
+
+    def delete_flow(self, datapath, match):
+        """Helper to delete a flow entry from a switch."""
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        
+        # Create a flow mod message with DELETE command
+        mod = parser.OFPFlowMod(
+            datapath=datapath,
+            command=ofproto.OFPFC_DELETE,
+            out_port=ofproto.OFPP_ANY,
+            out_group=ofproto.OFPG_ANY,
+            priority=100,  # Match the priority used when installing flows
+            match=match
+        )
         datapath.send_msg(mod)
 
     def _dijkstra(self, src_switch_name):
@@ -177,7 +220,9 @@ class L3UnicastController(app_manager.RyuApp):
             
         previous_nodes = self._dijkstra(src_switch)
         path = self._get_path(previous_nodes, src_switch, dst_switch)
-        if not path: return
+        if not path:
+            self.logger.error(f"No path found from {src_switch} to {dst_switch}. Packet from {src_ip} to {dst_ip} will be dropped.")
+            return
             
         self.logger.info(f"Unicast path found: {' -> '.join(path)}. Installing rules.")
         
@@ -192,7 +237,14 @@ class L3UnicastController(app_manager.RyuApp):
         next_hop_switch = path[1]
         out_port = self._get_port_to_neighbor(datapath.id, next_hop_switch)
         if out_port:
-            actions = [datapath.ofproto_parser.OFPActionOutput(out_port)]
+            src_mac = self.port_info[datapath.id][out_port]['mac']
+            dst_mac = self.port_info[datapath.id][out_port].get('neighbor_mac', self.ip_to_mac[dst_ip])
+            actions = [
+                datapath.ofproto_parser.OFPActionDecNwTtl(),
+                datapath.ofproto_parser.OFPActionSetField(eth_src=src_mac),
+                datapath.ofproto_parser.OFPActionSetField(eth_dst=dst_mac),
+                datapath.ofproto_parser.OFPActionOutput(out_port)
+            ]
             out = datapath.ofproto_parser.OFPPacketOut(
                 datapath=datapath, buffer_id=msg.buffer_id, in_port=in_port, 
                 actions=actions, data=msg.data)
@@ -247,15 +299,15 @@ class L3UnicastController(app_manager.RyuApp):
 
     def _get_port_to_neighbor(self, dpid, neighbor):
         """Finds the port connecting to another switch."""
-        interfaces = self.switch_info[f's{dpid}'].get('interfaces', self.switch_info[f's{dpid}'].get('intesfaces', []))
+        interfaces = self.switch_info[f's{dpid}'].get('interfaces', self.switch_info[f's{dpid}'].get('interfaces', []))
         for i, iface in enumerate(interfaces, 1):
-            if iface.get('neighbor', iface.get('neighbos')) == neighbor: return i
+            if iface.get('neighbor', iface.get('neighbour')) == neighbor: return i
         return None
 
     def _get_port_to_host(self, dpid, host_ip):
         """Finds the port connecting to a host's subnet."""
         host_net = ip_network(self.host_info[host_ip]['connected_subnet'])
-        interfaces = self.switch_info[f's{dpid}'].get('interfaces', self.switch_info[f's{dpid}'].get('intesfaces', []))
+        interfaces = self.switch_info[f's{dpid}'].get('interfaces', self.switch_info[f's{dpid}'].get('interfaces', []))
         for i, iface in enumerate(interfaces, 1):
             if ip_address(iface['ip']) in host_net: return i
         return None
@@ -268,3 +320,94 @@ class L3UnicastController(app_manager.RyuApp):
             datapath=datapath, buffer_id=datapath.ofproto.OFP_NO_BUFFER,
             in_port=datapath.ofproto.OFPP_CONTROLLER, actions=actions, data=pkt.data)
         datapath.send_msg(out)
+
+    def _invalidate_all_installed_paths(self):
+        """
+        Invalidates all installed paths by deleting flow rules from switches and clearing the cache.
+        This is called when the network topology changes (link up or down).
+        """
+        if not self.installed_paths:
+            self.logger.info("No installed paths to invalidate.")
+            return
+        
+        self.logger.info(f"Invalidating all {len(self.installed_paths)} installed paths due to topology change...")
+        
+        # Collect unique destination IPs from installed paths
+        destination_ips = set()
+        for (src_ip, dst_ip) in self.installed_paths:
+            destination_ips.add(dst_ip)
+        
+        # Delete flow rules for each destination IP from all switches
+        for dst_ip in destination_ips:
+            for switch_name, switch_info in self.switch_info.items():
+                dpid = switch_info['dpid']
+                datapath = self.datapaths.get(dpid)
+                
+                if datapath:
+                    # Create a match for this destination IP
+                    match = datapath.ofproto_parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_dst=dst_ip)
+                    self.delete_flow(datapath, match)
+                    self.logger.info(f"Deleted flow rules for destination {dst_ip} from switch {switch_name} (dpid={dpid})")
+        
+        # Clear the installed paths cache completely
+        self.installed_paths.clear()
+        self.logger.info("All installed paths have been invalidated and cache cleared.")
+
+    @set_ev_cls(ofp_event.EventOFPPortStatus, MAIN_DISPATCHER)
+    def port_status_handler(self, ev):
+        """
+        Handles port status change events to detect link failures and restorations.
+        When a link goes down or comes back up, the network topology is updated and all paths are invalidated.
+        """
+        msg = ev.msg
+        reason = msg.reason
+        port_desc = msg.desc
+        datapath = msg.datapath
+        dpid = datapath.id
+        port_no = port_desc.port_no
+        ofproto = datapath.ofproto
+        
+        # Only process MODIFY events (link state changes)
+        if reason != ofproto.OFPPR_MODIFY:
+            return
+        
+        # Check if this port is connected to another switch
+        if (dpid, port_no) not in self.port_to_neighbor:
+            # This port is not connected to a switch (probably a host), ignore it
+            return
+        
+        neighbor_switch = self.port_to_neighbor[(dpid, port_no)]
+        current_switch = f's{dpid}'
+        
+        # Determine if the link is going down or coming up
+        if port_desc.state & ofproto.OFPPS_LINK_DOWN:
+            # Link is going DOWN
+            self.logger.info(f"===== LINK DOWN DETECTED: {current_switch} <-> {neighbor_switch} (port {port_no}) =====")
+            
+            # Remove the link from the graph (both directions)
+            if neighbor_switch in self.graph.get(current_switch, {}):
+                del self.graph[current_switch][neighbor_switch]
+                self.logger.info(f"Removed edge: {current_switch} -> {neighbor_switch} from topology graph")
+            
+            if current_switch in self.graph.get(neighbor_switch, {}):
+                del self.graph[neighbor_switch][current_switch]
+                self.logger.info(f"Removed edge: {neighbor_switch} -> {current_switch} from topology graph")
+            
+            # Invalidate all installed paths and delete flow rules
+            self._invalidate_all_installed_paths()
+            
+        else:
+            # Link is coming UP
+            self.logger.info(f"===== LINK UP DETECTED: {current_switch} <-> {neighbor_switch} (port {port_no}) =====")
+            
+            # Restore the link in the graph with original cost
+            if (current_switch, neighbor_switch) in self.original_link_costs:
+                original_cost = self.original_link_costs[(current_switch, neighbor_switch)]
+                self.graph[current_switch][neighbor_switch] = original_cost
+                self.graph[neighbor_switch][current_switch] = original_cost
+                self.logger.info(f"Restored link: {current_switch} <-> {neighbor_switch} with cost={original_cost}")
+            else:
+                self.logger.warning(f"Could not find original cost for link {current_switch} <-> {neighbor_switch}")
+            
+            # Invalidate all installed paths to allow recomputation with new topology
+            self._invalidate_all_installed_paths()
