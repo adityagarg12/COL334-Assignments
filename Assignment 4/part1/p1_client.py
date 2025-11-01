@@ -196,7 +196,7 @@ def receive_file(sock, server_addr):
         except socket.timeout:
             # Periodically resend ACK in case it was lost
             current_time = time.time()
-            if current_time - last_ack_time > 0.2:
+            if current_time - last_ack_time > 0.08:
                 sack_blocks = state.get_sack_blocks()
                 ack_packet = create_ack_packet(state.next_expected_seq, sack_blocks)
                 sock.sendto(ack_packet, server_addr)

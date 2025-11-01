@@ -9,7 +9,7 @@ MAX_PAYLOAD = 1200
 HEADER_SIZE = 20
 DATA_SIZE = MAX_PAYLOAD - HEADER_SIZE  # 1180 bytes
 EOF_MARKER = b"EOF"
-INITIAL_RTO = 0.5  # Initial Retransmission Timeout in seconds
+INITIAL_RTO = 0.3  # Was 0.5 
 ALPHA = 0.125  # RTT smoothing factor
 BETA = 0.25    # RTT deviation factor
 
@@ -48,7 +48,8 @@ class ServerState:
             self.estimated_rtt = (1 - ALPHA) * self.estimated_rtt + ALPHA * sample_rtt
         
         self.rto = self.estimated_rtt + 4 * self.dev_rtt
-        self.rto = max(0.2, min(self.rto, 1.5)) # Clamp RTO between 200ms and 1500ms
+        self.rto = max(0.15, min(self.rto, 1.0))
+
 
 def parse_ack(data):
     """Parse ACK packet: [ack_num (4B)] [SACK blocks (16B)]"""
@@ -139,6 +140,7 @@ def send_file(sock, client_addr, file_data, sws):
                 break
             
             # Update RTT if this ACKs new data
+            # Line 156-163, modify:
             if ack_num > state.send_base:
                 if state.send_base in state.packets:
                     sample_rtt = current_time - state.packets[state.send_base].send_time
@@ -148,6 +150,7 @@ def send_file(sock, client_addr, file_data, sws):
                 for seq in list(state.packets.keys()):
                     if seq < ack_num:
                         del state.packets[seq]
+                        state.sack_retransmitted.discard(seq)  # ADD THIS LINE
                 
                 state.send_base = ack_num
                 state.dup_ack_count.clear()
@@ -158,36 +161,52 @@ def send_file(sock, client_addr, file_data, sws):
                 state.dup_ack_count[ack_num] = state.dup_ack_count.get(ack_num, 0) + 1
                 
                 # Fast retransmit on 3 duplicate ACKs
-                if state.dup_ack_count[ack_num] == 3:
+                if state.dup_ack_count[ack_num] == 1:
                     if state.send_base in state.packets:
                         packet = state.packets[state.send_base]
                         packet.send_time = current_time
                         sock.sendto(packet.to_bytes(), client_addr)
                         print(f"Fast retransmit: seq={state.send_base}")
             
+            # Handle SACK blocks
             for start, end in sack_blocks:
                 # Remove SACKed packets
                 for seq in list(state.packets.keys()):
                     if start <= seq < end:
                         if seq in state.packets:
                             del state.packets[seq]
-                            # Clear from retransmit tracking when ACKed
                             state.sack_retransmitted.discard(seq)
             
-            # SACK-based proactive retransmission: detect and retransmit holes
-            if sack_blocks and ack_num == state.send_base:  # Only if cumulative ACK hasn't moved
-                # Find the minimum hole between send_base and first SACK block
+            # SACK-based proactive retransmission with safety checks
+            # Replace lines 186-207 with this SIMPLER version:
+            if sack_blocks and ack_num == state.send_base:
                 first_sack_start = min(block[0] for block in sack_blocks)
                 
-                # If there's a gap between send_base and first SACK block, retransmit it ONCE
                 if first_sack_start > state.send_base:
-                    if state.send_base in state.packets and state.send_base not in state.sack_retransmitted:
+                    if state.send_base in state.packets:
                         packet = state.packets[state.send_base]
-                        packet.send_time = current_time
-                        sock.sendto(packet.to_bytes(), client_addr)
-                        state.sack_retransmitted.add(state.send_base)
-                        print(f"SACK-triggered retransmit: seq={state.send_base}")
-            
+                        time_since_send = current_time - packet.send_time
+                        
+                        # Adaptive wait based on packets remaining
+                        packets_in_flight = len(state.packets) - (1 if file_size in state.packets else 0)
+                        
+                        if state.estimated_rtt:
+                            if packets_in_flight <= 1:
+                                # Last 2 packets: very conservative
+                                adaptive_wait = max(0.15, state.estimated_rtt + 4 * state.dev_rtt)
+                            else:
+                                # Bulk transfer: moderately aggressive
+                                adaptive_wait = max(0.12, state.estimated_rtt + 2.8 * state.dev_rtt)
+                        else:
+                            adaptive_wait = 0.2
+                        
+                        if (state.send_base not in state.sack_retransmitted and 
+                            time_since_send > adaptive_wait):
+                            
+                            packet.send_time = current_time
+                            sock.sendto(packet.to_bytes(), client_addr)
+                            state.sack_retransmitted.add(state.send_base)
+                            print(f"SACK retransmit: seq={state.send_base}")
             state.last_ack_received = ack_num
             
         except socket.timeout:
