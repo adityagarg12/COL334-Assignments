@@ -1,3 +1,4 @@
+
 import socket
 import sys
 import time
@@ -99,7 +100,6 @@ def send_request_with_retry(sock, server_addr):
     
     for attempt in range(REQUEST_RETRIES):
         sock.sendto(request_msg, server_addr)
-        print(f"Sent file request (attempt {attempt + 1}/{REQUEST_RETRIES})")
         
         # Wait for first data packet as confirmation
         sock.settimeout(REQUEST_TIMEOUT)
@@ -107,10 +107,8 @@ def send_request_with_retry(sock, server_addr):
             data, _ = sock.recvfrom(MAX_PAYLOAD)
             return data  # Return first packet
         except socket.timeout:
-            print(f"Request timeout, retrying...")
             continue
     
-    print("Failed to receive response after 5 retries")
     sys.exit(1)
 
 def receive_file(sock, server_addr):
@@ -129,7 +127,6 @@ def receive_file(sock, server_addr):
     if seq_num is not None:
         if payload == EOF_MARKER:
             # Empty file case
-            print("Received empty file (EOF)")
             ack_packet = create_ack_packet(seq_num + len(payload), [])
             sock.sendto(ack_packet, server_addr)
             output_file.close()
@@ -164,7 +161,6 @@ def receive_file(sock, server_addr):
             
             # Check for EOF
             if payload == EOF_MARKER:
-                print("Received EOF")
                 eof_received = True
                 
                 # Send final ACK for EOF
@@ -209,9 +205,7 @@ def receive_file(sock, server_addr):
     
     elapsed = time.time() - start_time
     bytes_received = state.next_expected_seq
-    throughput = bytes_received / elapsed / 1024 / 1024  # MB/s
-    print(f"Transfer complete: {bytes_received} bytes in {elapsed:.2f}s ({throughput:.2f} MB/s)")
-    print(f"File saved as received_data.txt")
+    print(f"Transfer complete: {bytes_received} bytes in {elapsed:.2f}s")
 
 def main():
     # Default values
@@ -235,14 +229,11 @@ def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server_addr = (server_ip, server_port)
     
-    print(f"Connecting to server {server_ip}:{server_port}")
-    
     # Receive file
     receive_file(sock, server_addr)
     
     # Close
     sock.close()
-    print("Client terminated")
 
 if __name__ == "__main__":
     main()

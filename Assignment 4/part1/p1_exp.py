@@ -81,15 +81,6 @@ def run(expname):
             for JITTER in jitter_list:
                 for i in range(0, NUM_ITERATIONS):
                     print(f"\n--- Running topology with {LOSS}% packet loss, base delay {DELAY}ms and jitter {JITTER}ms (iter {i+1}/{NUM_ITERATIONS})")
-                    
-                    
-                    os.system("pkill -9 -f p1_server.py")
-                    os.system("pkill -9 -f p1_client.py")
-                    time.sleep(0.5)
-                    
-                    # Clean up old output file
-                    if os.path.exists(OUTFILE):
-                        os.remove(OUTFILE)
 
                     # Create the custom topology with the specified loss, delay and jitter
                     topo = CustomTopo(loss=LOSS, delay=DELAY, jitter=JITTER)
@@ -110,6 +101,7 @@ def run(expname):
                     start_time = time.time()
                     
                     h1.cmd(f"python3 p1_server.py {SERVER_IP} {SERVER_PORT} {SWS} &")
+                    time.sleep(1)
                     result = h2.cmd(f"python3 p1_client.py {SERVER_IP} {SERVER_PORT}")
                     end_time = time.time()
                     ttc = end_time - start_time
@@ -117,10 +109,6 @@ def run(expname):
                     md5_hash = compute_md5(OUTFILE)
                     # write the result to a file
                     f_out.write(f"{i},{LOSS},{DELAY},{JITTER},{md5_hash},{ttc}\n")
-                    
-                    
-                    h1.cmd("pkill -f p1_server.py")
-                    time.sleep(0.2)
 
                     # Stop the network
                     net.stop()

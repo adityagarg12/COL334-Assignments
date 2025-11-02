@@ -1,3 +1,4 @@
+
 import socket
 import sys
 import time
@@ -36,7 +37,8 @@ class ServerState:
         self.dup_ack_count = {}  # ACK number -> count
         self.last_ack_received = -1
         self.sack_retransmitted = set()
-        
+        self.sack_hole_count = {} 
+        self.sack_hole_first_seen = {}
         
     def update_rtt(self, sample_rtt):
         """Update RTO using TCP-like algorithm"""
@@ -115,7 +117,6 @@ def send_file(sock, client_addr, file_data, sws):
             sock.sendto(eof_packet.to_bytes(), client_addr)
             state.packets[file_size] = eof_packet
             eof_sent = True
-            print("EOF sent")
         
         # Check for timeouts
         for seq_num, packet in list(state.packets.items()):
@@ -123,7 +124,6 @@ def send_file(sock, client_addr, file_data, sws):
                 # Timeout - retransmit
                 packet.send_time = current_time
                 sock.sendto(packet.to_bytes(), client_addr)
-                print(f"Timeout retransmit: seq={seq_num}")
         
         # Receive ACKs
         try:
@@ -136,7 +136,6 @@ def send_file(sock, client_addr, file_data, sws):
             # Check if this is EOF ACK
             if eof_sent and ack_num > file_size:
                 eof_acked = True
-                print("EOF acknowledged")
                 break
             
             # Update RTT if this ACKs new data
@@ -151,7 +150,13 @@ def send_file(sock, client_addr, file_data, sws):
                     if seq < ack_num:
                         del state.packets[seq]
                         state.sack_retransmitted.discard(seq)  # ADD THIS LINE
-                
+                        
+                # Clear hole tracking for ACKed packets
+                for hole_key in list(state.sack_hole_count.keys()):
+                    if hole_key[0] < ack_num:
+                        del state.sack_hole_count[hole_key]
+                        del state.sack_hole_first_seen[hole_key]
+
                 state.send_base = ack_num
                 state.dup_ack_count.clear()
                 state.last_ack_received = ack_num
@@ -166,7 +171,6 @@ def send_file(sock, client_addr, file_data, sws):
                         packet = state.packets[state.send_base]
                         packet.send_time = current_time
                         sock.sendto(packet.to_bytes(), client_addr)
-                        print(f"Fast retransmit: seq={state.send_base}")
             
             # Handle SACK blocks
             for start, end in sack_blocks:
@@ -183,30 +187,40 @@ def send_file(sock, client_addr, file_data, sws):
                 first_sack_start = min(block[0] for block in sack_blocks)
                 
                 if first_sack_start > state.send_base:
+                    hole_key = (state.send_base, first_sack_start)
+                    
+                    # Track hole occurrences and first seen time
+                    if hole_key not in state.sack_hole_count:
+                        state.sack_hole_first_seen[hole_key] = current_time
+                    state.sack_hole_count[hole_key] = state.sack_hole_count.get(hole_key, 0) + 1
+                    
                     if state.send_base in state.packets:
                         packet = state.packets[state.send_base]
                         time_since_send = current_time - packet.send_time
-                        
-                        # Adaptive wait based on packets remaining
+                        time_since_first_seen = current_time - state.sack_hole_first_seen[hole_key]
                         packets_in_flight = len(state.packets) - (1 if file_size in state.packets else 0)
+                        
+                        hole_confidence = state.sack_hole_count[hole_key]
                         
                         if state.estimated_rtt:
                             if packets_in_flight <= 1:
-                                # Last 2 packets: very conservative
+                                # Last packet: very conservative
                                 adaptive_wait = max(0.15, state.estimated_rtt + 4 * state.dev_rtt)
+                            elif hole_confidence >= 3 and time_since_first_seen > state.estimated_rtt * 2:
+                                # High confidence AND enough time passed = definitely lost
+                                adaptive_wait = max(0.10, state.estimated_rtt + 2.2 * state.dev_rtt)
                             else:
-                                # Bulk transfer: moderately aggressive
+                                # Normal case
                                 adaptive_wait = max(0.12, state.estimated_rtt + 2.8 * state.dev_rtt)
                         else:
                             adaptive_wait = 0.2
                         
                         if (state.send_base not in state.sack_retransmitted and 
                             time_since_send > adaptive_wait):
-                            
                             packet.send_time = current_time
                             sock.sendto(packet.to_bytes(), client_addr)
                             state.sack_retransmitted.add(state.send_base)
-                            print(f"SACK retransmit: seq={state.send_base}")
+
             state.last_ack_received = ack_num
             
         except socket.timeout:
@@ -215,8 +229,7 @@ def send_file(sock, client_addr, file_data, sws):
             continue
     
     elapsed = time.time() - start_time
-    throughput = file_size / elapsed / 1024 / 1024  # MB/s
-    print(f"Transfer complete: {file_size} bytes in {elapsed:.2f}s ({throughput:.2f} MB/s)")
+    print(f"Transfer complete: {file_size} bytes in {elapsed:.2f}s")
 
 def main():
     # Default values
@@ -254,21 +267,15 @@ def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((server_ip, server_port))
     
-    print(f"Server listening on {server_ip}:{server_port}")
-    print(f"Sender window size: {sws} bytes")
-    print(f"File size: {len(file_data)} bytes")
-    
     # Wait for client request (with retries)
     sock.settimeout(None)
     request, client_addr = sock.recvfrom(MAX_PAYLOAD)
-    print(f"Received request from {client_addr}")
     
     # Send file
     send_file(sock, client_addr, file_data, sws)
     
     # Close
     sock.close()
-    print("Server terminated")
 
 if __name__ == "__main__":
     main()
