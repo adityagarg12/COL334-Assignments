@@ -1,281 +1,228 @@
+import socket, sys, time, struct, os
 
-import socket
-import sys
-import time
-import struct
-import os
-
-# Constants
 MAX_PAYLOAD = 1200
 HEADER_SIZE = 20
-DATA_SIZE = MAX_PAYLOAD - HEADER_SIZE  # 1180 bytes
+DATA_SIZE = MAX_PAYLOAD - HEADER_SIZE
 EOF_MARKER = b"EOF"
-INITIAL_RTO = 0.3  # Was 0.5 
-ALPHA = 0.125  # RTT smoothing factor
-BETA = 0.25    # RTT deviation factor
+ALPHA = 0.125
+BETA = 0.25
 
-class Packet:
-    def __init__(self, seq_num, data):
-        self.seq_num = seq_num
-        self.data = data
-        self.send_time = None
-        
-    def to_bytes(self):
-        # Header: [seq_num (4B)] [SACK blocks (16B)] [data]
-        header = struct.pack('!I', self.seq_num) + b'\x00' * 16
-        return header + self.data
+class P:
+    def __init__(self, s, d):
+        self.s = s
+        self.d = d
+        self.t0 = None
+        self.t = None
+        self.rtx = False
+    def b(self):
+        return struct.pack('!I', self.s) + b'\x00'*16 + self.d
 
-class ServerState:
+class S:
     def __init__(self, sws):
-        self.sws = sws  # Sender window size in bytes
-        self.send_base = 0  # Next byte expecting ACK for
-        self.next_seq_num = 0  # Next byte to send
-        self.packets = {}  # seq_num -> Packet
-        self.rto = INITIAL_RTO
-        self.estimated_rtt = None
-        self.dev_rtt = 0
-        self.dup_ack_count = {}  # ACK number -> count
-        self.last_ack_received = -1
-        self.sack_retransmitted = set()
-        self.sack_hole_count = {} 
-        self.sack_hole_first_seen = {}
+        self.sws = sws
+        self.sb = 0
+        self.ns = 0
+        self.pk = {}
+        self.er = None
+        self.dr = 0
+        # OPTIMIZATION 1: More aggressive initial RTO
+        self.rto = 0.2  # Reduced from 0.3
+        self.max_rto = 2.0  # Reduced from 3.0
+        self.min_rto = 0.1  # Reduced from 0.15
+        self.bk = 1.0
+        self.dc = 0
+        self.last_ack = -1
+        self.dups = 0
+        # OPTIMIZATION 2: Track fast retransmit separately
+        self.fast_rtx_seq = set()
         
-    def update_rtt(self, sample_rtt):
-        """Update RTO using TCP-like algorithm"""
-        if self.estimated_rtt is None:
-            self.estimated_rtt = sample_rtt
-            self.dev_rtt = sample_rtt / 2
+    def upd_rtt(self, smp):
+        if self.er is None:
+            self.er = smp
+            self.dr = smp/2
         else:
-            self.dev_rtt = (1 - BETA) * self.dev_rtt + BETA * abs(sample_rtt - self.estimated_rtt)
-            self.estimated_rtt = (1 - ALPHA) * self.estimated_rtt + ALPHA * sample_rtt
+            self.dr = (1-BETA)*self.dr + BETA*abs(smp - self.er)
+            self.er = (1-ALPHA)*self.er + ALPHA*smp
+        # OPTIMIZATION 3: More responsive RTO calculation
+        self.rto = max(self.min_rto, min(self.er + 3*self.dr, self.max_rto))
+        self.bk = 1.0
         
-        self.rto = self.estimated_rtt + 4 * self.dev_rtt
-        self.rto = max(0.15, min(self.rto, 1.0))
+    def backoff(self):
+        # OPTIMIZATION 4: Less aggressive backoff
+        self.bk = min(self.bk*1.5, 3.0)  # Changed from 2.0 and 4.0
+        self.rto = min(self.rto*self.bk, self.max_rto)
 
-
-def parse_ack(data):
-    """Parse ACK packet: [ack_num (4B)] [SACK blocks (16B)]"""
-    if len(data) < 20:
+def parse_ack(b):
+    if len(b) < 20:
         return None, []
-    
-    ack_num = struct.unpack('!I', data[:4])[0]
-    
-    # Parse SACK blocks (2 blocks max, each 8 bytes)
-    sack_blocks = []
+    a = struct.unpack('!I', b[:4])[0]
+    s = []
     for i in range(2):
-        offset = 4 + i * 8
-        if offset + 8 <= len(data):
-            block_data = data[offset:offset + 8]
-            if block_data != b'\x00' * 8:  # Non-zero SACK block
-                start, end = struct.unpack('!II', block_data)
-                if start != 0 or end != 0:
-                    sack_blocks.append((start, end))
-    
-    return ack_num, sack_blocks
+        off = 4 + i*8
+        x = b[off:off+8]
+        if len(x) == 8 and x != b'\x00'*8:
+            st, en = struct.unpack('!II', x)
+            if st or en:
+                s.append((st, en))
+    return a, s
 
-def send_file(sock, client_addr, file_data, sws):
-    """Send file using sliding window protocol"""
-    state = ServerState(sws)
-    file_size = len(file_data)
-    all_data_sent = False
-    eof_sent = False
-    eof_acked = False
+def send_file(sk, ca, fd, sws):
+    st = S(sws)
+    n = len(fd)
+    done = False
+    eof_tx = False
+    eof_ok = False
+    # OPTIMIZATION 5: Increase socket timeout to reduce CPU spinning
+    sk.settimeout(0.02)  # Increased from 0.01
+    ts = time.time()
+    last_send_time = 0
     
-    print(f"Starting file transfer: {file_size} bytes")
-    start_time = time.time()
-    
-    # Set socket to non-blocking for efficient handling
-    sock.settimeout(0.01)
-    
-    while not eof_acked:
-        current_time = time.time()
+    while not eof_ok:
+        now = time.time()
         
-        # Send new packets within window
-        while (state.next_seq_num < state.send_base + state.sws and 
-               not all_data_sent):
-            
-            if state.next_seq_num >= file_size:
-                all_data_sent = True
+        # OPTIMIZATION 6: Send packets in bursts when window allows
+        send_count = 0
+        max_burst = 10  # Send up to 10 packets per burst
+        while st.ns < st.sb + st.sws and not done and send_count < max_burst:
+            if st.ns >= n:
+                done = True
                 break
-            
-            # Create and send packet
-            end_byte = min(state.next_seq_num + DATA_SIZE, file_size)
-            data_chunk = file_data[state.next_seq_num:end_byte]
-            
-            packet = Packet(state.next_seq_num, data_chunk)
-            packet.send_time = current_time
-            
-            sock.sendto(packet.to_bytes(), client_addr)
-            state.packets[state.next_seq_num] = packet
-            
-            state.next_seq_num = end_byte
+            e = min(st.ns + DATA_SIZE, n)
+            ch = fd[st.ns:e]
+            p = P(st.ns, ch)
+            p.t0 = now
+            p.t = now
+            sk.sendto(p.b(), ca)
+            st.pk[st.ns] = p
+            st.ns = e
+            send_count += 1
         
-        # Send EOF if all data sent and not yet sent EOF
-        if all_data_sent and not eof_sent and state.send_base >= file_size:
-            eof_packet = Packet(file_size, EOF_MARKER)
-            eof_packet.send_time = current_time
-            sock.sendto(eof_packet.to_bytes(), client_addr)
-            state.packets[file_size] = eof_packet
-            eof_sent = True
+        if done and not eof_tx and st.sb >= n:
+            p = P(n, EOF_MARKER)
+            p.t0 = now
+            p.t = now
+            sk.sendto(p.b(), ca)
+            st.pk[n] = p
+            eof_tx = True
         
-        # Check for timeouts
-        for seq_num, packet in list(state.packets.items()):
-            if current_time - packet.send_time > state.rto:
-                # Timeout - retransmit
-                packet.send_time = current_time
-                sock.sendto(packet.to_bytes(), client_addr)
+        # OPTIMIZATION 7: More efficient timeout checking
+        rtx_needed = []
+        for s, p in st.pk.items():
+            if now - p.t > st.rto:
+                rtx_needed.append((s, p))
         
-        # Receive ACKs
+        for s, p in rtx_needed:
+            p.t = now
+            p.rtx = True
+            sk.sendto(p.b(), ca)
+            if s in st.fast_rtx_seq:
+                st.fast_rtx_seq.remove(s)
+        
+        if rtx_needed:
+            st.backoff()
+        
         try:
-            ack_data, _ = sock.recvfrom(MAX_PAYLOAD)
-            ack_num, sack_blocks = parse_ack(ack_data)
-            
-            if ack_num is None:
+            b, _ = sk.recvfrom(MAX_PAYLOAD)
+            a, sack = parse_ack(b)
+            if a is None:
                 continue
             
-            # Check if this is EOF ACK
-            if eof_sent and ack_num > file_size:
-                eof_acked = True
+            if eof_tx and a > n:
+                eof_ok = True
                 break
             
-            # Update RTT if this ACKs new data
-            # Line 156-163, modify:
-            if ack_num > state.send_base:
-                if state.send_base in state.packets:
-                    sample_rtt = current_time - state.packets[state.send_base].send_time
-                    state.update_rtt(sample_rtt)
+            if a > st.sb:
+                # OPTIMIZATION 8: Update RTT only from non-retransmitted packets
+                p0 = st.pk.get(st.sb)
+                if p0 and not p0.rtx and p0.s not in st.fast_rtx_seq:
+                    smp = now - p0.t0
+                    st.upd_rtt(smp)
                 
-                # Cumulative ACK - remove all packets up to ack_num
-                for seq in list(state.packets.keys()):
-                    if seq < ack_num:
-                        del state.packets[seq]
-                        state.sack_retransmitted.discard(seq)  # ADD THIS LINE
-                        
-                # Clear hole tracking for ACKed packets
-                for hole_key in list(state.sack_hole_count.keys()):
-                    if hole_key[0] < ack_num:
-                        del state.sack_hole_count[hole_key]
-                        del state.sack_hole_first_seen[hole_key]
-
-                state.send_base = ack_num
-                state.dup_ack_count.clear()
-                state.last_ack_received = ack_num
+                # Clean up acknowledged packets
+                for s in list(st.pk.keys()):
+                    if s < a:
+                        st.pk.pop(s, None)
+                        st.fast_rtx_seq.discard(s)
                 
-            elif ack_num == state.send_base and ack_num == state.last_ack_received:
-                # Duplicate ACK
-                state.dup_ack_count[ack_num] = state.dup_ack_count.get(ack_num, 0) + 1
+                st.sb = a
+                st.last_ack = a
+                st.dups = 0
                 
-                # Fast retransmit on 3 duplicate ACKs
-                if state.dup_ack_count[ack_num] == 1:
-                    if state.send_base in state.packets:
-                        packet = state.packets[state.send_base]
-                        packet.send_time = current_time
-                        sock.sendto(packet.to_bytes(), client_addr)
+            elif a == st.sb:
+                if st.last_ack == a:
+                    st.dups += 1
+                    # OPTIMIZATION 9: Fast retransmit on 3 duplicate ACKs
+                    if st.dups == 1 and st.sb in st.pk:
+                        p = st.pk[st.sb]
+                        p.t = now
+                        p.rtx = True
+                        sk.sendto(p.b(), ca)
+                        st.fast_rtx_seq.add(st.sb)
+                        st.dups = 0  # Reset after fast retransmit
+                else:
+                    st.last_ack = a
+                    st.dups = 1
             
-            # Handle SACK blocks
-            for start, end in sack_blocks:
-                # Remove SACKed packets
-                for seq in list(state.packets.keys()):
-                    if start <= seq < end:
-                        if seq in state.packets:
-                            del state.packets[seq]
-                            state.sack_retransmitted.discard(seq)
-            
-            # SACK-based proactive retransmission with safety checks
-            # Replace lines 186-207 with this SIMPLER version:
-            if sack_blocks and ack_num == state.send_base:
-                first_sack_start = min(block[0] for block in sack_blocks)
+            # OPTIMIZATION 10: More aggressive SACK-based retransmission
+            if sack:
+                for stt, en in sack:
+                    for s in list(st.pk.keys()):
+                        if stt <= s < en:
+                            st.pk.pop(s, None)
+                            st.fast_rtx_seq.discard(s)
                 
-                if first_sack_start > state.send_base:
-                    hole_key = (state.send_base, first_sack_start)
-                    
-                    # Track hole occurrences and first seen time
-                    if hole_key not in state.sack_hole_count:
-                        state.sack_hole_first_seen[hole_key] = current_time
-                    state.sack_hole_count[hole_key] = state.sack_hole_count.get(hole_key, 0) + 1
-                    
-                    if state.send_base in state.packets:
-                        packet = state.packets[state.send_base]
-                        time_since_send = current_time - packet.send_time
-                        time_since_first_seen = current_time - state.sack_hole_first_seen[hole_key]
-                        packets_in_flight = len(state.packets) - (1 if file_size in state.packets else 0)
-                        
-                        hole_confidence = state.sack_hole_count[hole_key]
-                        
-                        if state.estimated_rtt:
-                            if packets_in_flight <= 1:
-                                # Last packet: very conservative
-                                adaptive_wait = max(0.15, state.estimated_rtt + 4 * state.dev_rtt)
-                            elif hole_confidence >= 3 and time_since_first_seen > state.estimated_rtt * 2:
-                                # High confidence AND enough time passed = definitely lost
-                                adaptive_wait = max(0.10, state.estimated_rtt + 2.2 * state.dev_rtt)
-                            else:
-                                # Normal case
-                                adaptive_wait = max(0.12, state.estimated_rtt + 2.8 * state.dev_rtt)
-                        else:
-                            adaptive_wait = 0.2
-                        
-                        if (state.send_base not in state.sack_retransmitted and 
-                            time_since_send > adaptive_wait):
-                            packet.send_time = current_time
-                            sock.sendto(packet.to_bytes(), client_addr)
-                            state.sack_retransmitted.add(state.send_base)
-
-            state.last_ack_received = ack_num
-            
+                # If we have SACK holes, retransmit immediately
+                if a == st.sb and sack and st.sb in st.pk:
+                    ms = min(x[0] for x in sack)
+                    if ms > st.sb:
+                        p = st.pk[st.sb]
+                        # More aggressive SACK-based retransmit
+                        if now - p.t > max(st.min_rto, st.er * 0.8 if st.er else 0.1):
+                            p.t = now
+                            p.rtx = True
+                            sk.sendto(p.b(), ca)
+                            st.fast_rtx_seq.add(st.sb)
+                            
         except socket.timeout:
             continue
         except BlockingIOError:
             continue
     
-    elapsed = time.time() - start_time
-    print(f"Transfer complete: {file_size} bytes in {elapsed:.2f}s")
+    te = time.time() - ts
+    thr = n/te/1024/1024 if te > 0 else 0
+    print(f"Transfer complete: {n} bytes in {te:.2f}s ({thr:.2f} MB/s)")
 
 def main():
-    # Default values
-    DEFAULT_SERVER_IP = "127.0.0.1"
-    DEFAULT_SERVER_PORT = 8080
-    DEFAULT_SWS = 5000  # 10KB default window size
-    
+    D_IP = "127.0.0.1"
+    D_PORT = 8080
+    D_SWS = 5900
     if len(sys.argv) == 4:
-        server_ip = sys.argv[1]
-        server_port = int(sys.argv[2])
+        ip = sys.argv[1]
+        port = int(sys.argv[2])
         sws = int(sys.argv[3])
     elif len(sys.argv) == 1:
-        # Use defaults
-        server_ip = DEFAULT_SERVER_IP
-        server_port = DEFAULT_SERVER_PORT
-        sws = DEFAULT_SWS
-        print(f"Using default values: IP={server_ip}, PORT={server_port}, SWS={sws}")
+        ip = D_IP
+        port = D_PORT
+        sws = D_SWS
+        print(f"Using default values: IP={ip}, PORT={port}, SWS={sws}")
     else:
         print("Usage: python3 p1_server.py [<SERVER_IP> <SERVER_PORT> <SWS>]")
-        print(f"If no arguments provided, defaults to IP={DEFAULT_SERVER_IP}, PORT={DEFAULT_SERVER_PORT}, SWS={DEFAULT_SWS}")
         sys.exit(1)
-    
-    # Read file
     if not os.path.exists('data.txt'):
         print("Error: data.txt not found")
         sys.exit(1)
-    
     with open('data.txt', 'rb') as f:
-        file_data = f.read()
-    
-    if len(file_data) == 0:
-        print("Warning: data.txt is empty")
-    
-    # Create socket
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind((server_ip, server_port))
-    
-    # Wait for client request (with retries)
-    sock.settimeout(None)
-    request, client_addr = sock.recvfrom(MAX_PAYLOAD)
-    
-    # Send file
-    send_file(sock, client_addr, file_data, sws)
-    
-    # Close
-    sock.close()
+        fd = f.read()
+    sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sk.bind((ip, port))
+    print(f"Server listening on {ip}:{port}")
+    print(f"Sender window size: {sws} bytes")
+    print(f"File size: {len(fd)} bytes")
+    sk.settimeout(None)
+    _, ca = sk.recvfrom(MAX_PAYLOAD)
+    send_file(sk, ca, fd, sws)
+    sk.close()
+    print("Server terminated")
 
 if __name__ == "__main__":
     main()
