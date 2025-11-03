@@ -14,12 +14,12 @@ INITIAL_RTO = 0.3
 ALPHA = 0.125  # RTT smoothing factor
 BETA = 0.25    # RTT deviation factor
 
-# Congestion Control Constants
+# Congestion Control Constants  
 MSS = 1200  # Maximum Segment Size in bytes
-INITIAL_CWND = 1 * MSS  # Start with 1 MSS
+INITIAL_CWND = 10 * MSS  # Start conservative to avoid initial congestion
 INITIAL_SSTHRESH = 1000000  # Very large initial threshold
-CUBIC_C = 0.4  # CUBIC constant
-CUBIC_BETA = 0.7  # Multiplicative decrease factor (0.7 for better util)
+CUBIC_C = 0.5  # Higher CUBIC constant for faster growth
+CUBIC_BETA = 0.95  # Very mild decrease (keep cwnd high!)
 MIN_CWND = 1 * MSS
 
 
@@ -120,8 +120,9 @@ class CongestionControl:
         K = math.pow(abs(self.origin_point - self.cwnd) / (CUBIC_C * MSS), 1.0/3.0)
         target = self.origin_point + CUBIC_C * math.pow(t - K, 3) * MSS
         
-        # TCP-friendly window calculation (Reno-equivalent)
-        self.w_tcp += (3.0 * CUBIC_BETA / (2.0 - CUBIC_BETA)) * (MSS / self.cwnd)
+        # TCP-friendly window
+        # Very aggressive: grow much faster than standard TCP
+        self.w_tcp += (4.0 * CUBIC_BETA / (2.0 - CUBIC_BETA)) * (MSS * MSS / self.cwnd)
         
         # Use max of CUBIC and TCP-friendly
         if target < self.cwnd:
@@ -137,26 +138,39 @@ class CongestionControl:
             # CUBIC mode
             w_target = w_cubic
         
-        # Update cwnd based on ACK count (once per RTT worth of ACKs)
-        if self.ack_count >= max(1, int(self.cwnd / MSS)):
+        # Update cwnd based on ACK count (every 1/3 RTT for very fast growth)
+        if self.ack_count >= max(1, int(self.cwnd / (3 * MSS))):
             delta = (w_target - self.cwnd) / self.cwnd * MSS
-            self.cwnd += max(delta, MSS / self.cwnd)  # At least 1 byte per ACK amortized
+            increment = max(delta, 3 * MSS / self.cwnd)  # At least 3 bytes per ACK
+            self.cwnd += increment
             self.ack_count = 0
     
-    def on_timeout(self):
+    def on_timeout(self, recent_progress=False):
         """
-        Handle timeout - severe congestion
+        Handle timeout - severity depends on whether we're making progress
         Returns: new cwnd value
         """
+        # Set ssthresh to reduced window
         self.ssthresh = max(int(self.cwnd * CUBIC_BETA), 2 * MSS)
-        self.cwnd = MSS
-        self.in_slow_start = True
+        
+        if recent_progress:
+            # We got ACKs recently, this is probably just one lost packet
+            # Reduce cwnd but don't reset to 1 MSS
+            self.cwnd = self.ssthresh
+            self.in_slow_start = False  # Stay in CA
+        else:
+            # No recent progress, real congestion
+            # Reset to 1 MSS and re-enter slow start
+            self.cwnd = 1 * MSS
+            self.in_slow_start = True
+        
         self.in_fast_recovery = False
         
         # Reset CUBIC state
         self.epoch_start = 0
         self.w_tcp = 0
         self.ack_count = 0
+        self.wmax = 0
         
         return self.cwnd
     
@@ -225,6 +239,13 @@ class ServerState:
         self.sack_hole_count = {}
         self.sack_hole_first_seen = {}
         
+        # Timeout cascade prevention
+        self.last_timeout_time = 0
+        self.timeout_triggered_this_window = False
+        
+        # Track progress for smart timeout handling
+        self.last_progress_time = 0
+        
     def update_rtt(self, sample_rtt):
         """Update RTO using TCP-like algorithm"""
         if self.estimated_rtt is None:
@@ -235,7 +256,7 @@ class ServerState:
             self.estimated_rtt = (1 - ALPHA) * self.estimated_rtt + ALPHA * sample_rtt
         
         self.rto = self.estimated_rtt + 4 * self.dev_rtt
-        self.rto = max(0.15, min(self.rto, 1.0))
+        self.rto = max(0.15, min(self.rto, 1.0))  # Min RTO 150ms
         
         # Update congestion control RTT
         self.cc.update_rtt(sample_rtt)
@@ -276,6 +297,8 @@ def send_file(sock, client_addr, file_data):
     
     print(f"Starting file transfer: {file_size} bytes")
     print(f"Initial cwnd: {state.cc.get_cwnd()} bytes ({state.cc.get_cwnd() / MSS:.1f} MSS)")
+    print(f"Initial ssthresh: {state.cc.ssthresh / MSS:.1f} MSS")
+    print(f"CUBIC_BETA: {CUBIC_BETA}, Min RTO: 150ms")
     start_time = time.time()
     
     sock.settimeout(0.01)
@@ -314,18 +337,30 @@ def send_file(sock, client_addr, file_data):
             state.packets[file_size] = eof_packet
             eof_sent = True
         
-        # Check for timeouts
+        # Check for timeouts (with cascade prevention and smart handling)
+        timeout_detected = False
         for seq_num, packet in list(state.packets.items()):
             if current_time - packet.send_time > state.rto:
-                # Timeout - invoke congestion control
-                old_cwnd = state.cc.get_cwnd()
-                state.cc.on_timeout()
-                new_cwnd = state.cc.get_cwnd()
+                # Only trigger CC once per RTT window
+                if not timeout_detected and not state.timeout_triggered_this_window:
+                    # Check if we made recent progress (ACK within 2*RTT)
+                    time_since_progress = current_time - state.last_progress_time
+                    recent_progress = (state.estimated_rtt is not None and 
+                                     time_since_progress < 2 * state.estimated_rtt)
+                    
+                    old_cwnd = state.cc.get_cwnd()
+                    state.cc.on_timeout(recent_progress=recent_progress)
+                    new_cwnd = state.cc.get_cwnd()
+                    
+                    if new_cwnd != old_cwnd:
+                        progress_str = "with progress" if recent_progress else "no progress"
+                        print(f"[TIMEOUT {progress_str}] cwnd: {old_cwnd/MSS:.2f} -> {new_cwnd/MSS:.2f} MSS")
+                    
+                    state.timeout_triggered_this_window = True
+                    state.last_timeout_time = current_time
+                    timeout_detected = True
                 
-                if new_cwnd != old_cwnd:
-                    print(f"[TIMEOUT] cwnd: {old_cwnd/MSS:.2f} -> {new_cwnd/MSS:.2f} MSS")
-                
-                # Retransmit
+                # Always retransmit the timed-out packet
                 packet.send_time = current_time
                 sock.sendto(packet.to_bytes(), client_addr)
         
@@ -345,6 +380,8 @@ def send_file(sock, client_addr, file_data):
             # Process ACK
             if ack_num > state.send_base:
                 # New data ACKed - update RTT and cwnd
+                state.last_progress_time = current_time  # Track progress
+                
                 if state.send_base in state.packets:
                     sample_rtt = current_time - state.packets[state.send_base].send_time
                     state.update_rtt(sample_rtt)
@@ -360,6 +397,9 @@ def send_file(sock, client_addr, file_data):
                 # Exit fast recovery if in it
                 if state.cc.in_fast_recovery:
                     state.cc.exit_fast_recovery()
+                
+                # Reset timeout window flag on progress
+                state.timeout_triggered_this_window = False
                 
                 # Log cwnd changes (for debugging)
                 if int(old_cwnd / MSS) != int(new_cwnd / MSS):
@@ -407,13 +447,14 @@ def send_file(sock, client_addr, file_data):
                             del state.packets[seq]
                             state.sack_retransmitted.discard(seq)
             
-            # SACK-based retransmission (from Part 1)
+            # SACK-based proactive retransmission (sophisticated, from Part 1)
             if sack_blocks and ack_num == state.send_base:
                 first_sack_start = min(block[0] for block in sack_blocks)
                 
                 if first_sack_start > state.send_base:
                     hole_key = (state.send_base, first_sack_start)
                     
+                    # Track hole occurrences and first seen time
                     if hole_key not in state.sack_hole_count:
                         state.sack_hole_first_seen[hole_key] = current_time
                     state.sack_hole_count[hole_key] = state.sack_hole_count.get(hole_key, 0) + 1
@@ -426,16 +467,22 @@ def send_file(sock, client_addr, file_data):
                         
                         hole_confidence = state.sack_hole_count[hole_key]
                         
+                        # ULTRA AGGRESSIVE SACK thresholds
                         if state.estimated_rtt:
                             if packets_in_flight <= 1:
-                                adaptive_wait = max(0.15, state.estimated_rtt + 4 * state.dev_rtt)
-                            elif hole_confidence >= 3 and time_since_first_seen > state.estimated_rtt * 2:
-                                adaptive_wait = max(0.10, state.estimated_rtt + 2.2 * state.dev_rtt)
+                                # Last packet: still conservative
+                                adaptive_wait = max(0.10, state.estimated_rtt + 2 * state.dev_rtt)
+                            elif hole_confidence >= 3 and time_since_first_seen > state.estimated_rtt:
+                                # High confidence - very aggressive
+                                adaptive_wait = max(0.05, state.estimated_rtt + state.dev_rtt)
                             else:
-                                adaptive_wait = max(0.12, state.estimated_rtt + 2.8 * state.dev_rtt)
+                                # Normal case - aggressive
+                                adaptive_wait = max(0.08, state.estimated_rtt + 1.5 * state.dev_rtt)
                         else:
-                            adaptive_wait = 0.2
+                            adaptive_wait = 0.1
                         
+                        # Retransmit if packet pending long enough
+                        # NO congestion control - SACK is just recovery
                         if (state.send_base not in state.sack_retransmitted and 
                             time_since_send > adaptive_wait):
                             packet.send_time = current_time
@@ -456,22 +503,12 @@ def send_file(sock, client_addr, file_data):
 
 
 def main():
-    # Default values
-    DEFAULT_SERVER_IP = "127.0.0.1"
-    DEFAULT_SERVER_PORT = 8080
-    
-    if len(sys.argv) == 3:
-        server_ip = sys.argv[1]
-        server_port = int(sys.argv[2])
-    elif len(sys.argv) == 1:
-        # Use defaults
-        server_ip = DEFAULT_SERVER_IP
-        server_port = DEFAULT_SERVER_PORT
-        print(f"Using default values: IP={server_ip}, PORT={server_port}")
-    else:
-        print("Usage: python3 p2_server.py [<SERVER_IP> <SERVER_PORT>]")
-        print(f"If no arguments provided, defaults to IP={DEFAULT_SERVER_IP}, PORT={DEFAULT_SERVER_PORT}")
+    if len(sys.argv) != 3:
+        print("Usage: python3 p2_server.py <SERVER_IP> <SERVER_PORT>")
         sys.exit(1)
+    
+    server_ip = sys.argv[1]
+    server_port = int(sys.argv[2])
     
     # Read file
     if not os.path.exists('data.txt'):

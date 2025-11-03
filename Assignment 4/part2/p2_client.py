@@ -1,3 +1,4 @@
+
 import socket
 import sys
 import time
@@ -208,25 +209,13 @@ def receive_file(sock, server_addr, output_filename):
 
 
 def main():
-    # Default values
-    DEFAULT_SERVER_IP = "127.0.0.1"
-    DEFAULT_SERVER_PORT = 8080
-    DEFAULT_PREFIX = ""
-    
-    if len(sys.argv) == 4:
-        server_ip = sys.argv[1]
-        server_port = int(sys.argv[2])
-        prefix = sys.argv[3]
-    elif len(sys.argv) == 1:
-        # Use defaults
-        server_ip = DEFAULT_SERVER_IP
-        server_port = DEFAULT_SERVER_PORT
-        prefix = DEFAULT_PREFIX
-        print(f"Using default values: IP={server_ip}, PORT={server_port}, PREFIX='{prefix}'")
-    else:
-        print("Usage: python3 p2_client.py [<SERVER_IP> <SERVER_PORT> <PREF_FILENAME>]")
-        print(f"If no arguments provided, defaults to IP={DEFAULT_SERVER_IP}, PORT={DEFAULT_SERVER_PORT}, PREFIX='{DEFAULT_PREFIX}'")
+    if len(sys.argv) != 4:
+        print("Usage: python3 p2_client.py <SERVER_IP> <SERVER_PORT> <PREF_FILENAME>")
         sys.exit(1)
+    
+    server_ip = sys.argv[1]
+    server_port = int(sys.argv[2])
+    prefix = sys.argv[3]
     
     # Output filename with prefix
     output_filename = f"{prefix}received_data.txt"
