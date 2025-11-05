@@ -16,7 +16,7 @@ BETA = 0.25    # RTT deviation factor
 
 # Congestion Control Constants  
 MSS = 1200  # Maximum Segment Size in bytes
-INITIAL_CWND = 10 * MSS  # Start conservative to avoid initial congestion
+INITIAL_CWND = 1 * MSS  # Start conservative to avoid initial congestion
 INITIAL_SSTHRESH = 1000000  # Very large initial threshold
 CUBIC_C = 0.5  # Higher CUBIC constant for faster growth
 CUBIC_BETA = 0.95  # Very mild decrease (keep cwnd high!)
